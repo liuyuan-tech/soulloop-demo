@@ -13,17 +13,17 @@ export default function HomePage() {
         </h1>
 
         <p className="mt-6 max-w-2xl text-lg leading-8 text-white/70">
-          SoulLoop transforms your questions into symbolic reflections inspired
-          by I Ching-style thinking, Bagua, Yin-Yang, Five Elements, and
-          Zi Wei Dou Shu-style life themes.
+          SoulLoop transforms your personal profile and life questions into
+          symbolic reflections inspired by I Ching-style thinking, Bagua,
+          Yin-Yang, Five Elements, and Zi Wei Dou Shu-style life themes.
         </p>
 
         <div className="mt-10 flex flex-col gap-4 sm:flex-row">
           <Link
-            href="/chat"
+            href="/profile"
             className="rounded-full bg-white px-8 py-4 font-semibold text-black"
           >
-            Try SoulLoop Free
+            Start with Your Profile
           </Link>
 
           <Link
@@ -35,29 +35,29 @@ export default function HomePage() {
         </div>
 
         <p className="mt-10 max-w-2xl text-sm text-white/40">
-          For entertainment and self-reflection only. SoulLoop does not provide
-          medical, legal, financial, psychological, or professional advice.
+          SoulLoop readings require a completed profile. Public pages such as
+          pricing, terms, privacy, and disclaimers can still be viewed freely.
         </p>
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-24">
         <h2 className="text-center text-4xl font-bold">
-          What you can ask SoulLoop
+          What SoulLoop helps you reflect on
         </h2>
 
         <div className="mt-12 grid gap-6 md:grid-cols-3">
           {[
             [
               "Love & Relationships",
-              "Explore emotional timing, communication patterns, and relationship uncertainty.",
+              "Explore emotional timing, communication patterns, boundaries, and relationship uncertainty.",
             ],
             [
               "Career & Decisions",
-              "Reflect on timing, direction, strengths, risk, and next steps.",
+              "Reflect on timing, direction, strengths, preparation, risk, and next steps.",
             ],
             [
               "Money & Growth",
-              "Look at wealth questions through discipline, value creation, and long-term cycles.",
+              "Look at wealth questions through discipline, value creation, accumulation, and long-term cycles.",
             ],
             [
               "Dream Interpretation",
@@ -65,11 +65,11 @@ export default function HomePage() {
             ],
             [
               "Daily Energy",
-              "Start the day with a symbolic reflection and practical focus.",
+              "Use your profile as context for symbolic daily focus and practical guidance.",
             ],
             [
               "Self-Discovery",
-              "Understand inner patterns, recurring tensions, and personal growth themes.",
+              "Understand inner patterns, recurring tensions, emotional themes, and personal growth signals.",
             ],
           ].map(([title, text]) => (
             <div
@@ -89,10 +89,10 @@ export default function HomePage() {
 
           <div className="mt-12 grid gap-6 md:grid-cols-4">
             {[
-              ["1", "Choose your topic"],
-              ["2", "Ask your question"],
-              ["3", "Select tone and depth"],
-              ["4", "Receive your SoulLoop reading"],
+              ["1", "Set up your SoulLoop profile"],
+              ["2", "Share your birth and life context"],
+              ["3", "Ask your life question"],
+              ["4", "Receive a personalized symbolic reading"],
             ].map(([step, text]) => (
               <div key={step} className="rounded-3xl bg-black/20 p-6">
                 <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white text-lg font-bold text-black">
@@ -104,10 +104,10 @@ export default function HomePage() {
           </div>
 
           <Link
-            href="/chat"
+            href="/profile"
             className="mt-10 inline-block rounded-full bg-white px-8 py-4 font-semibold text-black"
           >
-            Start a Reading
+            Start with Your Profile
           </Link>
         </div>
       </section>
