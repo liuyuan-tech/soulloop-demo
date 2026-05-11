@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { supabase } from "@/lib/supabase/client";
 
 type SoulLoopProfile = {
   birthDate: string;
@@ -15,11 +16,28 @@ type SoulLoopProfile = {
   preferredLanguage: string;
 };
 
+type SymbolicLens = {
+  topic: string;
+  bagua: string[];
+  elements: string[];
+  ziwei: string[];
+  focus: string;
+  interpretation: string;
+};
+
 type LoadingStep = {
   title: string;
   description: string;
   icon: string;
 };
+
+type InsufficientCreditsState = {
+  currentCredits: number;
+  requiredCredits: number;
+  message: string;
+};
+
+const STANDARD_READING_COST = 8;
 
 const loadingSteps: LoadingStep[] = [
   {
@@ -68,57 +86,128 @@ const relationshipLabels: Record<string, string> = {
   separated: "Separated",
 };
 
-const careerLabels: Record<string, string> = {
-  student: "Student",
-  employed: "Employed",
-  founder: "Founder / Entrepreneur",
-  freelancer: "Freelancer",
-  job_seeking: "Job seeking",
-  transition: "In transition",
-};
-
 const languageLabels: Record<string, string> = {
   same: "Same as question",
   english: "English",
   chinese: "中文",
 };
 
+const genderLabels: Record<string, string> = {
+  female: "Female",
+  male: "Male",
+  non_binary: "Non-binary",
+  other: "Other",
+};
+
+function isProfileComplete(profile: SoulLoopProfile | null) {
+  if (!profile) return false;
+
+  return Boolean(
+    profile.birthDate &&
+      profile.birthTime &&
+      profile.gender &&
+      profile.currentFocus &&
+      profile.relationshipStatus &&
+      profile.preferredLanguage
+  );
+}
+
 export default function ChatPage() {
   const [topic, setTopic] = useState("general");
   const [language, setLanguage] = useState("same");
   const [tone] = useState("premium-balanced");
   const [depth] = useState("standard");
+
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [lens, setLens] = useState<SymbolicLens | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [profile, setProfile] = useState<SoulLoopProfile | null>(null);
+  const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [profileChecked, setProfileChecked] = useState(false);
   const [currentLoadingStep, setCurrentLoadingStep] = useState(0);
+  const [error, setError] = useState("");
+  const [insufficientCredits, setInsufficientCredits] =
+    useState<InsufficientCreditsState | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem("soulloop_profile");
+    async function loadProfile() {
+      setProfileChecked(false);
+      setError("");
 
-    if (stored) {
       try {
-        const parsed = JSON.parse(stored) as SoulLoopProfile;
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-        const isProfileComplete =
-          Boolean(parsed.birthDate) && Boolean(parsed.currentFocus);
+        if (sessionError) {
+          setError(`Session error: ${sessionError.message}`);
+          setProfileChecked(true);
+          return;
+        }
 
-        if (isProfileComplete) {
-          setProfile(parsed);
-          setTopic(parsed.currentFocus || "general");
-          setLanguage(parsed.preferredLanguage || "same");
+        const user = session?.user;
+
+        if (!user) {
+          setProfileChecked(true);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select(
+            "birth_date,birth_time,birth_place,gender,current_focus,relationship_status,career_status,preferred_language,credits_balance"
+          )
+          .eq("id", user.id)
+          .single();
+
+        if (error) {
+          setError(`Profile load error: ${error.message}`);
+          setProfileChecked(true);
+          return;
+        }
+
+        const mappedProfile: SoulLoopProfile = {
+          birthDate: data.birth_date || "",
+          birthTime: data.birth_time || "",
+          birthPlace: data.birth_place || "",
+          gender: data.gender || "",
+          currentFocus: data.current_focus || "",
+          relationshipStatus: data.relationship_status || "",
+          careerStatus: data.career_status || "",
+          preferredLanguage: data.preferred_language || "",
+        };
+
+        if (isProfileComplete(mappedProfile)) {
+          setProfile(mappedProfile);
+          setTopic(mappedProfile.currentFocus || "general");
+          setLanguage(mappedProfile.preferredLanguage || "same");
+          setCreditsBalance(
+            typeof data.credits_balance === "number"
+              ? data.credits_balance
+              : null
+          );
         } else {
           setProfile(null);
         }
-      } catch {
-        setProfile(null);
+
+        setProfileChecked(true);
+      } catch (error) {
+        console.error("CHAT_LOAD_PROFILE_ERROR:", error);
+
+        setError(
+          error instanceof Error
+            ? `Failed to load profile: ${error.message}`
+            : "Failed to load profile."
+        );
+
+        setProfileChecked(true);
       }
     }
 
-    setProfileChecked(true);
+    loadProfile();
   }, []);
 
   useEffect(() => {
@@ -140,20 +229,36 @@ export default function ChatPage() {
   async function handleAsk() {
     if (!question.trim()) return;
 
-    if (!profile) {
+    if (!profile || !isProfileComplete(profile)) {
       setAnswer("Please complete your SoulLoop profile before asking.");
       return;
     }
 
     setLoading(true);
     setAnswer("");
+    setLens(null);
+    setError("");
+    setInsufficientCredits(null);
     setCurrentLoadingStep(0);
 
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const accessToken = session?.access_token;
+
+      if (!accessToken) {
+        setAnswer("Please log in before generating a reading.");
+        setLoading(false);
+        return;
+      }
+
       const response = await fetch("/api/demo-chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           topic,
@@ -161,19 +266,43 @@ export default function ChatPage() {
           language,
           tone,
           depth,
-          profile,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        if (data.code === "INSUFFICIENT_CREDITS") {
+          const currentCredits =
+            typeof data.remainingCredits === "number"
+              ? data.remainingCredits
+              : creditsBalance ?? 0;
+
+          setCreditsBalance(currentCredits);
+          setInsufficientCredits({
+            currentCredits,
+            requiredCredits: STANDARD_READING_COST,
+            message:
+              data.error ||
+              `Not enough credits. A standard reading costs ${STANDARD_READING_COST} credits.`,
+          });
+
+          setAnswer("");
+          return;
+        }
+
         setAnswer(data.error || "Something went wrong.");
         return;
       }
 
       setAnswer(data.answer);
-    } catch {
+      setLens(data.lens || null);
+
+      if (typeof data.remainingCredits === "number") {
+        setCreditsBalance(data.remainingCredits);
+      }
+    } catch (error) {
+      console.error("CHAT_REQUEST_ERROR:", error);
       setAnswer("Network error. Please try again.");
     } finally {
       setLoading(false);
@@ -190,6 +319,11 @@ export default function ChatPage() {
   const progressPercent = useMemo(() => {
     return Math.round(((currentLoadingStep + 1) / loadingSteps.length) * 100);
   }, [currentLoadingStep]);
+
+  const readingsLeft = useMemo(() => {
+    if (typeof creditsBalance !== "number") return null;
+    return Math.floor(creditsBalance / STANDARD_READING_COST);
+  }, [creditsBalance]);
 
   if (!profileChecked) {
     return (
@@ -217,27 +351,33 @@ export default function ChatPage() {
             </p>
 
             <h1 className="text-4xl font-bold">
-              Set up your SoulLoop profile first
+              Complete your SoulLoop profile first
             </h1>
 
             <p className="mt-4 leading-8 text-white/60">
-              SoulLoop uses your profile to personalize symbolic readings.
-              Please complete your basic profile before using Chat.
+              Birth Date, Birth Time, Gender, Current Focus, Relationship
+              Status, and Preferred Language are required before using Chat.
             </p>
+
+            {error && (
+              <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200">
+                {error}
+              </div>
+            )}
 
             <div className="mt-8 flex flex-col gap-4 sm:flex-row">
               <Link
                 href="/profile"
                 className="rounded-full bg-white px-8 py-4 text-center font-semibold text-black"
               >
-                Set Up Profile
+                Complete Profile
               </Link>
 
               <Link
-                href="/"
+                href="/login"
                 className="rounded-full border border-white/20 px-8 py-4 text-center font-semibold text-white"
               >
-                Back to Home
+                Log In
               </Link>
             </div>
           </div>
@@ -276,6 +416,20 @@ export default function ChatPage() {
 
             <div className="space-y-3 text-sm">
               <div className="flex justify-between gap-4">
+                <span className="text-white/40">Credits</span>
+                <span className="text-right font-semibold text-white">
+                  {creditsBalance === null ? "—" : creditsBalance}
+                </span>
+              </div>
+
+              <div className="flex justify-between gap-4">
+                <span className="text-white/40">Readings left</span>
+                <span className="text-right font-semibold text-white">
+                  {readingsLeft === null ? "—" : readingsLeft}
+                </span>
+              </div>
+
+              <div className="flex justify-between gap-4">
                 <span className="text-white/40">Focus</span>
                 <span className="text-right text-white/75">
                   {focusLabels[profile.currentFocus] || profile.currentFocus}
@@ -285,35 +439,22 @@ export default function ChatPage() {
               <div className="flex justify-between gap-4">
                 <span className="text-white/40">Birth</span>
                 <span className="text-right text-white/75">
-                  {profile.birthDate}
-                  {profile.birthTime ? ` · ${profile.birthTime}` : ""}
+                  {profile.birthDate} · {profile.birthTime}
                 </span>
               </div>
 
               <div className="flex justify-between gap-4">
-                <span className="text-white/40">Place</span>
+                <span className="text-white/40">Gender</span>
                 <span className="text-right text-white/75">
-                  {profile.birthPlace || "Not provided"}
+                  {genderLabels[profile.gender] || profile.gender}
                 </span>
               </div>
 
               <div className="flex justify-between gap-4">
                 <span className="text-white/40">Relationship</span>
                 <span className="text-right text-white/75">
-                  {profile.relationshipStatus
-                    ? relationshipLabels[profile.relationshipStatus] ||
-                      profile.relationshipStatus
-                    : "Not provided"}
-                </span>
-              </div>
-
-              <div className="flex justify-between gap-4">
-                <span className="text-white/40">Career</span>
-                <span className="text-right text-white/75">
-                  {profile.careerStatus
-                    ? careerLabels[profile.careerStatus] ||
-                      profile.careerStatus
-                    : "Not provided"}
+                  {relationshipLabels[profile.relationshipStatus] ||
+                    profile.relationshipStatus}
                 </span>
               </div>
 
@@ -325,6 +466,13 @@ export default function ChatPage() {
                 </span>
               </div>
             </div>
+
+            <Link
+              href="/credits"
+              className="mt-5 block rounded-full border border-white/20 px-5 py-3 text-center text-sm font-semibold text-white"
+            >
+              Buy Credits
+            </Link>
           </div>
         </div>
 
@@ -337,7 +485,10 @@ export default function ChatPage() {
             {examples.map((item) => (
               <button
                 key={item}
-                onClick={() => setQuestion(item)}
+                onClick={() => {
+                  setQuestion(item);
+                  setInsufficientCredits(null);
+                }}
                 className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-sm text-white/70 transition hover:bg-white/10"
               >
                 {item}
@@ -347,19 +498,86 @@ export default function ChatPage() {
 
           <textarea
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
+            onChange={(e) => {
+              setQuestion(e.target.value);
+              setInsufficientCredits(null);
+            }}
             placeholder="Type your question here..."
             className="min-h-44 w-full resize-none rounded-[28px] border border-white/10 bg-black/20 p-5 text-lg text-white outline-none placeholder:text-white/30"
           />
 
-          <button
-            onClick={handleAsk}
-            disabled={loading || !question.trim()}
-            className="mt-5 rounded-full bg-white px-10 py-4 text-lg font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? "Calculating Reading..." : "Generate Reading"}
-          </button>
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              onClick={handleAsk}
+              disabled={loading || !question.trim()}
+              className="rounded-full bg-white px-10 py-4 text-lg font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? "Calculating Reading..." : "Generate Reading"}
+            </button>
+
+            <p className="text-sm text-white/40">
+              Standard reading costs {STANDARD_READING_COST} credits.
+            </p>
+          </div>
         </div>
+
+        {insufficientCredits && !loading && (
+          <div className="mt-8 rounded-[32px] border border-amber-300/20 bg-amber-300/10 p-6">
+            <p className="mb-3 inline-block rounded-full border border-amber-200/20 px-4 py-2 text-sm text-amber-100">
+              Not enough credits
+            </p>
+
+            <h2 className="text-3xl font-bold text-white">
+              You need more credits to continue
+            </h2>
+
+            <p className="mt-4 max-w-2xl leading-8 text-white/65">
+              {insufficientCredits.message}
+            </p>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="text-sm text-white/40">Current Balance</p>
+                <p className="mt-2 text-3xl font-bold text-white">
+                  {insufficientCredits.currentCredits}
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="text-sm text-white/40">Required</p>
+                <p className="mt-2 text-3xl font-bold text-white">
+                  {insufficientCredits.requiredCredits}
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="text-sm text-white/40">Readings Left</p>
+                <p className="mt-2 text-3xl font-bold text-white">
+                  {Math.floor(
+                    insufficientCredits.currentCredits /
+                      insufficientCredits.requiredCredits
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-7 flex flex-col gap-4 sm:flex-row">
+              <Link
+                href="/credits"
+                className="rounded-full bg-white px-8 py-4 text-center font-semibold text-black"
+              >
+                Buy Credits
+              </Link>
+
+              <Link
+                href="/history"
+                className="rounded-full border border-white/20 px-8 py-4 text-center font-semibold text-white"
+              >
+                View Previous Readings
+              </Link>
+            </div>
+          </div>
+        )}
 
         {loading && (
           <div className="mt-8 rounded-[32px] border border-white/10 bg-white/5 p-6">
@@ -370,9 +588,7 @@ export default function ChatPage() {
                   SoulLoop Reading Engine
                 </div>
 
-                <h2 className="mt-4 text-3xl font-bold">
-                  命理解读演算中
-                </h2>
+                <h2 className="mt-4 text-3xl font-bold">命理解读演算中</h2>
 
                 <p className="mt-3 max-w-2xl leading-7 text-white/60">
                   正在融合你的个人档案、问题主题、八卦象征、五行脉络与紫微主题，生成本次解读。
@@ -414,30 +630,84 @@ export default function ChatPage() {
                 />
               </div>
             </div>
+          </div>
+        )}
 
-            <div className="mt-6 grid gap-3 md:grid-cols-5">
-              {loadingSteps.map((step, index) => {
-                const isDone = index < currentLoadingStep;
-                const isActive = index === currentLoadingStep;
+        {lens && !loading && (
+          <div className="mt-8 rounded-[32px] border border-white/10 bg-white/5 p-6">
+            <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.2em] text-white/35">
+                  SoulLoop Symbolic Lens
+                </p>
+                <h2 className="mt-2 text-2xl font-bold text-white">
+                  {lens.topic}
+                </h2>
+              </div>
 
-                return (
-                  <div
-                    key={step.title}
-                    className={`rounded-2xl border p-3 text-sm ${
-                      isActive
-                        ? "border-white/20 bg-white/10"
-                        : isDone
-                        ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
-                        : "border-white/10 bg-black/15 text-white/45"
-                    }`}
-                  >
-                    <div className="mb-2 text-lg">
-                      {isDone ? "✓" : step.icon}
-                    </div>
-                    <p className="font-medium">{step.title}</p>
-                  </div>
-                );
-              })}
+              <div className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-sm text-white/60">
+                Profile + Question Mapping
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="mb-3 text-sm uppercase tracking-[0.18em] text-white/35">
+                  Bagua Lens
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {lens.bagua.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/75"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="mb-3 text-sm uppercase tracking-[0.18em] text-white/35">
+                  Five Elements
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {lens.elements.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/75"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="mb-3 text-sm uppercase tracking-[0.18em] text-white/35">
+                  Zi Wei Themes
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {lens.ziwei.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/75"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-5">
+              <p className="text-sm uppercase tracking-[0.18em] text-white/35">
+                Reading Focus
+              </p>
+              <p className="mt-3 leading-7 text-white/70">{lens.focus}</p>
+              <p className="mt-3 text-sm leading-7 text-white/45">
+                {lens.interpretation}
+              </p>
             </div>
           </div>
         )}

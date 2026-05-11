@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 type SoulLoopProfile = {
   birthDate?: string;
@@ -26,8 +27,80 @@ type DemoChatRequest = {
   language?: string;
   tone?: string;
   depth?: string;
-  profile?: SoulLoopProfile | null;
 };
+
+const STANDARD_READING_COST = 8;
+
+function normalizeLabel(value?: string) {
+  if (!value) return "not provided";
+
+  const map: Record<string, string> = {
+    female: "Female",
+    male: "Male",
+    non_binary: "Non-binary",
+    other: "Other",
+
+    love: "Love / Relationship",
+    career: "Career",
+    money: "Money",
+    daily_energy: "Daily Energy",
+    decision: "Decision",
+    self_growth: "Self-Growth",
+    general: "General",
+
+    single: "Single",
+    dating: "Dating",
+    in_relationship: "In a relationship",
+    complicated: "Complicated",
+    married: "Married",
+    separated: "Separated",
+
+    student: "Student",
+    employed: "Employed",
+    founder: "Founder / Entrepreneur",
+    freelancer: "Freelancer",
+    job_seeking: "Job seeking",
+    transition: "In transition",
+
+    same: "Same as the user's question",
+    english: "English",
+    chinese: "Chinese",
+  };
+
+  return map[value] || value;
+}
+
+function validateProfile(profile?: SoulLoopProfile | null) {
+  if (!profile) {
+    return "Profile is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.birthDate) {
+    return "Birth date is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.birthTime) {
+    return "Birth time is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.gender) {
+    return "Gender is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.currentFocus) {
+    return "Current focus is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.relationshipStatus) {
+    return "Relationship status is required before generating a SoulLoop reading.";
+  }
+
+  if (!profile.preferredLanguage) {
+    return "Preferred language is required before generating a SoulLoop reading.";
+  }
+
+  return "";
+}
 
 function detectLanguage(text: string, languageChoice = "same") {
   if (languageChoice === "chinese") {
@@ -303,11 +376,11 @@ function formatProfile(profile?: SoulLoopProfile | null) {
 Birth date: ${profile.birthDate || "not provided"}
 Birth time: ${profile.birthTime || "not provided"}
 Birth place: ${profile.birthPlace || "not provided"}
-Gender: ${profile.gender || "not provided"}
-Current focus: ${profile.currentFocus || "not provided"}
-Relationship status: ${profile.relationshipStatus || "not provided"}
-Career status: ${profile.careerStatus || "not provided"}
-Preferred language: ${profile.preferredLanguage || "not provided"}
+Gender: ${normalizeLabel(profile.gender)}
+Current focus: ${normalizeLabel(profile.currentFocus)}
+Relationship status: ${normalizeLabel(profile.relationshipStatus)}
+Career status: ${normalizeLabel(profile.careerStatus)}
+Preferred language: ${normalizeLabel(profile.preferredLanguage)}
 `;
 }
 
@@ -325,7 +398,7 @@ function buildPrompt({
   language: string;
   tone: string;
   depth: string;
-  profile?: SoulLoopProfile | null;
+  profile: SoulLoopProfile;
   lens: SymbolicLens;
 }) {
   const lang = detectLanguage(question, language);
@@ -340,8 +413,32 @@ You are SoulLoop, an AI symbolic reflection guide inspired by Eastern wisdom, Ba
 USER QUESTION:
 ${question}
 
-USER PROFILE:
+USER PROFILE PROVIDED BY THE USER:
 ${profileContext}
+
+IMPORTANT PROFILE USAGE INSTRUCTION:
+You must use the user's provided profile as soft context when shaping the reading.
+
+The user's profile fields mean:
+- Birth date: use as symbolic timing context and life-stage reference.
+- Birth time: use as symbolic time-of-day context and rhythm reference.
+- Birth place: if provided, use only as light contextual background.
+- Gender: use only to personalize wording and context. Do not make deterministic claims from gender.
+- Current focus: use as the primary domain lens for the reading.
+- Relationship status: use to ground emotional and relationship-related guidance.
+- Career status: if provided, use to ground practical guidance.
+- Preferred language: respect the selected output language rule.
+
+Do not ignore the profile.
+Do not overstate the profile.
+Do not say you calculated a real BaZi chart, Zi Wei chart, astrology chart, or birth chart from these details.
+Do not claim the user's birth data proves anything.
+Use phrases like:
+- "Given the context you shared..."
+- "With your current focus in mind..."
+- "Your profile suggests this reading may be most useful when viewed through..."
+- "Because you marked your relationship status as..."
+- "Because your current focus is..."
 
 USER SELECTED TOPIC:
 ${topic}
@@ -396,10 +493,11 @@ PERSONALIZATION RULE:
 Use the user profile only to personalize the tone, context, and relevance of the reading.
 Do not claim that you have calculated a real chart from the user's birth date, birth time, or birth place.
 Do not make deterministic claims based on birth information, gender, relationship status, or career status.
-If profile fields are missing, do not mention that they are missing unless necessary.
+If profile fields are present, weave the most relevant ones naturally into the reading.
 When using profile information, phrase it softly, such as:
 - "Given the context you shared..."
 - "With your current focus in mind..."
+- "Because you marked your relationship status as..."
 - "Your saved profile suggests this reading may be most useful when viewed through..."
 Never say:
 - "Your birth chart proves..."
@@ -410,6 +508,7 @@ CORE TASK:
 Respond to the user's question as a symbolic reflection, not as a factual prediction.
 You should help the user think more clearly, feel emotionally grounded, and identify practical next steps.
 Use the SoulLoop Symbolic Lens as the primary professional interpretation structure for the answer.
+Use the user's profile as personalization context throughout the answer.
 
 IMPORTANT SAFETY RULES:
 - Do not claim certainty.
@@ -457,7 +556,9 @@ Use the provided Bagua Lens, Five Elements, Zi Wei Themes, Reading Focus, and Le
 Do not claim a real chart, hexagram, or divination was calculated.
 
 # ${lang.headings.profile}
-Use the saved user profile only as soft context. Briefly explain how the user's current focus, relationship status, career status, or birth context may shape the reading. If no useful profile was provided, keep this section very short.
+Use the saved user profile as soft context.
+Mention the most relevant profile details, such as birth date/time as symbolic timing context, current focus, gender, relationship status, career status, and preferred language if relevant.
+Keep this section grounded and non-deterministic.
 
 # ${lang.headings.meaning}
 Directly address the user's question with symbolic reflection and practical clarity.
@@ -478,16 +579,49 @@ Return only the final answer. Do not explain your reasoning process.
 `;
 }
 
+function mapDatabaseProfile(data: any): SoulLoopProfile {
+  return {
+    birthDate: data.birth_date || "",
+    birthTime: data.birth_time || "",
+    birthPlace: data.birth_place || "",
+    gender: data.gender || "",
+    currentFocus: data.current_focus || "",
+    relationshipStatus: data.relationship_status || "",
+    careerStatus: data.career_status || "",
+    preferredLanguage: data.preferred_language || "",
+  };
+}
+
 export async function POST(request: Request) {
   try {
+    const authorization = request.headers.get("authorization") || "";
+    const token = authorization.replace("Bearer ", "").trim();
+
+    if (!token) {
+      return NextResponse.json(
+        { error: "Authentication required. Please log in." },
+        { status: 401 }
+      );
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabaseAdmin.auth.getUser(token);
+
+    if (userError || !user) {
+      return NextResponse.json(
+        { error: "Invalid or expired session. Please log in again." },
+        { status: 401 }
+      );
+    }
+
     const body = (await request.json()) as DemoChatRequest;
 
-    const topic = body.topic || "general";
     const question = body.question?.trim();
-    const language = body.language || "same";
     const tone = body.tone || "premium-balanced";
     const depth = body.depth || "standard";
-    const profile = body.profile || null;
+    const creditsUsed = STANDARD_READING_COST;
 
     if (!question) {
       return NextResponse.json(
@@ -502,6 +636,56 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    const { data: profileRow, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select(
+        "id,email,birth_date,birth_time,birth_place,gender,current_focus,relationship_status,career_status,preferred_language,credits_balance"
+      )
+      .eq("id", user.id)
+      .single();
+
+    if (profileError || !profileRow) {
+      return NextResponse.json(
+        {
+          error:
+            profileError?.message ||
+            "Profile not found. Please complete your profile first.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const profile = mapDatabaseProfile(profileRow);
+    const profileValidationError = validateProfile(profile);
+
+    if (profileValidationError) {
+      return NextResponse.json(
+        {
+          error: profileValidationError,
+        },
+        { status: 400 }
+      );
+    }
+
+    const currentCredits =
+      typeof profileRow.credits_balance === "number"
+        ? profileRow.credits_balance
+        : 0;
+
+    if (currentCredits < creditsUsed) {
+      return NextResponse.json(
+        {
+          error: `Not enough credits. This reading costs ${creditsUsed} credits, but you only have ${currentCredits}.`,
+          remainingCredits: currentCredits,
+          code: "INSUFFICIENT_CREDITS",
+        },
+        { status: 402 }
+      );
+    }
+
+    const topic = body.topic || profile.currentFocus || "general";
+    const language = body.language || profile.preferredLanguage || "same";
 
     const lens = getSymbolicLens({
       topic,
@@ -530,7 +714,7 @@ export async function POST(request: Request) {
       lens,
     });
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const modelResponse = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -542,7 +726,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "You are SoulLoop, a safe symbolic reflection assistant. You must follow the user's selected language. Never provide deterministic predictions or professional advice. Never claim that you actually cast a hexagram or calculated a metaphysical chart.",
+              "You are SoulLoop, a safe symbolic reflection assistant. You must follow the user's selected language. Never provide deterministic predictions or professional advice. Never claim that you actually cast a hexagram or calculated a metaphysical chart. You must use the user's provided profile as soft personalization context.",
           },
           {
             role: "user",
@@ -554,33 +738,125 @@ export async function POST(request: Request) {
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
+    if (!modelResponse.ok) {
+      const errorText = await modelResponse.text();
 
       console.error("MODEL_API_ERROR:", {
-        status: response.status,
-        statusText: response.statusText,
+        status: modelResponse.status,
+        statusText: modelResponse.statusText,
         errorText,
       });
 
       return NextResponse.json(
         {
-          error: `Model API error ${response.status}: ${errorText}`,
+          error: `Model API error ${modelResponse.status}: ${errorText}`,
+          remainingCredits: currentCredits,
         },
         { status: 500 }
       );
     }
 
-    const data = await response.json();
+    const modelData = await modelResponse.json();
 
     const answer =
-      data?.choices?.[0]?.message?.content ||
+      modelData?.choices?.[0]?.message?.content ||
       "No answer returned from model.";
+
+    const inputTokens =
+      typeof modelData?.usage?.prompt_tokens === "number"
+        ? modelData.usage.prompt_tokens
+        : null;
+
+    const outputTokens =
+      typeof modelData?.usage?.completion_tokens === "number"
+        ? modelData.usage.completion_tokens
+        : null;
+
+    const { data: messageRow, error: messageError } = await supabaseAdmin
+      .from("messages")
+      .insert({
+        user_id: user.id,
+        topic,
+        question,
+        answer,
+        lens,
+        language,
+        tone,
+        depth,
+        credits_used: creditsUsed,
+        model_used: model,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+      })
+      .select("id")
+      .single();
+
+    if (messageError || !messageRow) {
+      console.error("MESSAGE_SAVE_ERROR:", messageError);
+
+      return NextResponse.json(
+        {
+          error:
+            "Reading was generated, but failed to save history. Credits were not deducted. Please try again.",
+          remainingCredits: currentCredits,
+        },
+        { status: 500 }
+      );
+    }
+
+    const remainingCredits = currentCredits - creditsUsed;
+
+    const { error: profileUpdateError } = await supabaseAdmin
+      .from("profiles")
+      .update({
+        credits_balance: remainingCredits,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+
+    if (profileUpdateError) {
+      console.error("CREDIT_UPDATE_ERROR:", profileUpdateError);
+
+      return NextResponse.json(
+        {
+          error:
+            "Reading was saved, but credits update failed. Please contact support.",
+          remainingCredits: currentCredits,
+        },
+        { status: 500 }
+      );
+    }
+
+    const { error: transactionError } = await supabaseAdmin
+      .from("credit_transactions")
+      .insert({
+        user_id: user.id,
+        amount: -creditsUsed,
+        type: "usage",
+        reason: "standard_reading",
+        message_id: messageRow.id,
+      });
+
+    if (transactionError) {
+      console.error("CREDIT_TRANSACTION_ERROR:", transactionError);
+
+      return NextResponse.json(
+        {
+          error:
+            "Reading was saved and credits were updated, but transaction logging failed. Please contact support.",
+          remainingCredits,
+        },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       answer,
       lens,
-      usage: data?.usage || null,
+      usage: modelData?.usage || null,
+      creditsUsed,
+      remainingCredits,
+      messageId: messageRow.id,
     });
   } catch (error) {
     console.error("DEMO_CHAT_ERROR:", error);
