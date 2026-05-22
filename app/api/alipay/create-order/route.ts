@@ -16,6 +16,11 @@ function createOutTradeNo() {
   return `SL${Date.now()}${random}`;
 }
 
+function getAppUrl() {
+  const raw = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return raw.replace(/\/+$/, "");
+}
+
 export async function POST(request: Request) {
   try {
     const authorization = request.headers.get("authorization") || "";
@@ -68,11 +73,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const { appId, privateKey, gateway } = getAlipayConfig();
+    const { appId, privateKey, privateKeyPkcs8Fallback, gateway } =
+      getAlipayConfig();
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const appUrl = getAppUrl();
     const outTradeNo = createOutTradeNo();
     const totalAmount = (creditPackage.price_cents / 100).toFixed(2);
+
+    const notifyUrl = `${appUrl}/api/alipay/notify`;
+
+    // 重要：return_url 暂时不要拼 out_trade_no。
+    // 支付宝网关会把 return_url 内部的 &out_trade_no 拆成独立参数，
+    // 容易导致签名字符串和支付宝侧验签字符串不一致。
+    const returnUrl = `${appUrl}/payment-success?provider=alipay`;
 
     const bizContent = {
       out_trade_no: outTradeNo,
@@ -97,12 +110,16 @@ export async function POST(request: Request) {
       sign_type: "RSA2",
       timestamp: formatAlipayTimestamp(),
       version: "1.0",
-      notify_url: `${appUrl}/api/alipay/notify`,
-      return_url: `${appUrl}/payment-success?provider=alipay&out_trade_no=${outTradeNo}`,
+      notify_url: notifyUrl,
+      return_url: returnUrl,
       biz_content: JSON.stringify(bizContent),
     };
 
-    const sign = signAlipayParams(params, privateKey);
+    const sign = signAlipayParams(
+      params,
+      privateKey,
+      privateKeyPkcs8Fallback
+    );
 
     const signedParams = {
       ...params,
@@ -115,6 +132,7 @@ export async function POST(request: Request) {
         user_id: user.id,
         provider: "alipay",
         alipay_out_trade_no: outTradeNo,
+        provider_order_id: outTradeNo,
         amount_total: creditPackage.price_cents,
         currency: (creditPackage.currency || "cny").toLowerCase(),
         status: "created",

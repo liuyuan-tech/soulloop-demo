@@ -211,10 +211,7 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    if (!loading) {
-      setCurrentLoadingStep(0);
-      return;
-    }
+    if (!loading) return;
 
     const interval = setInterval(() => {
       setCurrentLoadingStep((prev) => {

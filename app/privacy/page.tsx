@@ -23,13 +23,14 @@ export default function PrivacyPage() {
           </p>
 
           <p>
-            At this demo stage, SoulLoop does not yet provide user accounts,
-            payment processing, or long-term personal history storage.
+            SoulLoop may use account, payment, credit balance, referral, and
+            reading history data to operate the product and provide support.
           </p>
 
           <p>
-            When future account and payment features are added, this policy
-            should be reviewed and updated before accepting real payments.
+            Payment details are processed by payment providers such as Alipay or
+            Stripe. SoulLoop stores payment references and credit records, not
+            full card numbers.
           </p>
 
           <p>

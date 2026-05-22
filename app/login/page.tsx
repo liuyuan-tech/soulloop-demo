@@ -5,17 +5,164 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 
+type AuthMode = "login" | "signup";
+
 export default function LoginPage() {
   const router = useRouter();
 
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
-  const [status, setStatus] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
 
-  async function handleSubmit() {
+  function normalizeInviteCode(value: string) {
+    return value.trim().toUpperCase();
+  }
+
+  function getPendingInviteCode() {
+    if (typeof window === "undefined") return "";
+    return normalizeInviteCode(
+      window.localStorage.getItem("soulloop:pendingInviteCode") || ""
+    );
+  }
+
+  function setPendingInviteCode(value: string) {
+    if (typeof window === "undefined") return;
+
+    const normalizedCode = normalizeInviteCode(value);
+
+    if (normalizedCode) {
+      window.localStorage.setItem("soulloop:pendingInviteCode", normalizedCode);
+      return;
+    }
+
+    window.localStorage.removeItem("soulloop:pendingInviteCode");
+  }
+
+  async function ensureInviteCode(accessToken: string) {
+    const response = await fetch("/api/referrals/ensure-invite-code", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: data.error || "Invite code could not be ensured.",
+      };
+    }
+
+    return {
+      ok: true,
+      message: data.inviteCode
+        ? `Invite code ready: ${data.inviteCode}`
+        : "Invite code ready.",
+    };
+  }
+
+  async function applyReferralCode(accessToken: string, code: string) {
+    const normalizedCode = normalizeInviteCode(code);
+
+    if (!normalizedCode) {
+      return {
+        applied: false,
+        message: "",
+      };
+    }
+
+    const response = await fetch("/api/referrals/apply-code", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        inviteCode: normalizedCode,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return {
+        applied: false,
+        message: data.error || "Invite code could not be applied.",
+      };
+    }
+
+    return {
+      applied: Boolean(data.applied),
+      message: data.applied
+        ? "Invite code applied successfully."
+        : data.reason || "",
+    };
+  }
+
+  async function handleLogin() {
+    setStatus("");
+
+    if (!email || !password) {
+      setStatus("Please enter your email and password.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        setStatus(error.message);
+        return;
+      }
+
+      if (data.session?.access_token) {
+        const ensureResult = await ensureInviteCode(data.session.access_token);
+
+        if (!ensureResult.ok) {
+          setStatus(
+            `Logged in, but invite code setup needs attention: ${ensureResult.message}`
+          );
+        }
+
+        const pendingInviteCode = getPendingInviteCode();
+
+        if (pendingInviteCode) {
+          const referralResult = await applyReferralCode(
+            data.session.access_token,
+            pendingInviteCode
+          );
+
+          if (referralResult.applied) {
+            setPendingInviteCode("");
+          } else if (referralResult.message) {
+            setStatus(`Logged in. Invite code notice: ${referralResult.message}`);
+          }
+        }
+      }
+
+      router.push("/profile");
+    } catch (error) {
+      console.error("LOGIN_ERROR:", error);
+
+      setStatus(
+        error instanceof Error ? `Login failed: ${error.message}` : "Login failed."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSignup() {
     setStatus("");
 
     if (!email || !password) {
@@ -31,44 +178,87 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
+      const normalizedInviteCode = normalizeInviteCode(inviteCode);
 
-        if (error) {
-          setStatus(error.message);
-          return;
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            referral_code: normalizedInviteCode || null,
+          },
+        },
+      });
+
+      if (error) {
+        setStatus(error.message);
+        return;
+      }
+
+      const session = data.session;
+
+      if (!session?.access_token) {
+        if (normalizedInviteCode) {
+          setPendingInviteCode(normalizedInviteCode);
         }
 
         setStatus(
-          "Account created. If email confirmation is enabled, please check your inbox. Then log in."
+          normalizedInviteCode
+            ? "Account created. Please log in to complete invite code binding."
+            : "Account created. Please log in to continue."
+        );
+        setMode("login");
+        return;
+      }
+
+      const ensureResult = await ensureInviteCode(session.access_token);
+
+      let referralMessage = "";
+
+      if (normalizedInviteCode) {
+        const referralResult = await applyReferralCode(
+          session.access_token,
+          normalizedInviteCode
+        );
+
+        referralMessage = referralResult.message;
+      }
+
+      if (!ensureResult.ok) {
+        setStatus(
+          referralMessage
+            ? `Account created. ${referralMessage} Invite code setup needs attention: ${ensureResult.message}`
+            : `Account created. Invite code setup needs attention: ${ensureResult.message}`
         );
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) {
-          setStatus(error.message);
-          return;
-        }
-
-        router.push("/profile");
+        setStatus(
+          referralMessage
+            ? `Account created. ${referralMessage}`
+            : "Account created successfully."
+        );
       }
+
+      router.push("/profile");
     } catch (error) {
-      console.error("AUTH_ERROR:", error);
+      console.error("SIGNUP_ERROR:", error);
 
       setStatus(
         error instanceof Error
-          ? `Auth request failed: ${error.message}`
-          : "Auth request failed. Please check your Supabase connection."
+          ? `Signup failed: ${error.message}`
+          : "Signup failed."
       );
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleSubmit() {
+    if (mode === "login") {
+      handleLogin();
+      return;
+    }
+
+    handleSignup();
   }
 
   return (
@@ -84,38 +274,85 @@ export default function LoginPage() {
           </p>
 
           <h1 className="text-4xl font-bold">
-            {mode === "login" ? "Log in" : "Create account"}
+            {mode === "login" ? "Welcome back" : "Create your account"}
           </h1>
 
           <p className="mt-4 leading-7 text-white/60">
-            Sign in to save your profile, credits, and SoulLoop reading history.
+            {mode === "login"
+              ? "Log in to continue your SoulLoop readings."
+              : "Sign up to save your profile, readings, credits, and referral rewards."}
           </p>
+
+          <div className="mt-8 flex rounded-full border border-white/10 bg-black/20 p-1">
+            <button
+              onClick={() => {
+                setMode("login");
+                setStatus("");
+              }}
+              className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold ${
+                mode === "login"
+                  ? "bg-white text-black"
+                  : "text-white/55 hover:text-white"
+              }`}
+            >
+              Log in
+            </button>
+
+            <button
+              onClick={() => {
+                setMode("signup");
+                setStatus("");
+              }}
+              className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold ${
+                mode === "signup"
+                  ? "bg-white text-black"
+                  : "text-white/55 hover:text-white"
+              }`}
+            >
+              Sign up
+            </button>
+          </div>
 
           <div className="mt-8 space-y-4">
             <input
               type="email"
               placeholder="Email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setStatus("");
+              }}
               className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none placeholder:text-white/30"
             />
 
             <input
               type="password"
-              placeholder="Password, at least 6 characters"
+              placeholder="Password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setStatus("");
+              }}
               className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none placeholder:text-white/30"
             />
 
-            {mode === "login" && (
-              <div className="text-right">
-                <Link
-                  href="/forgot-password"
-                  className="text-sm text-white/55 underline"
-                >
-                  Forgot password?
-                </Link>
+            {mode === "signup" && (
+              <div>
+                <input
+                  type="text"
+                  placeholder="Invite code optional"
+                  value={inviteCode}
+                  onChange={(event) => {
+                    setInviteCode(normalizeInviteCode(event.target.value));
+                    setStatus("");
+                  }}
+                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 uppercase tracking-[0.12em] text-white outline-none placeholder:normal-case placeholder:tracking-normal placeholder:text-white/30"
+                />
+
+                <p className="mt-2 text-xs leading-5 text-white/35">
+                  Have an invite code? Enter it here to bind your account to the
+                  referrer. Rewards are created after your paid purchase.
+                </p>
               </div>
             )}
 
@@ -125,7 +362,9 @@ export default function LoginPage() {
               className="w-full rounded-full bg-white px-8 py-4 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading
-                ? "Please wait..."
+                ? mode === "login"
+                  ? "Logging in..."
+                  : "Creating account..."
                 : mode === "login"
                 ? "Log in"
                 : "Create account"}
@@ -138,17 +377,37 @@ export default function LoginPage() {
             </div>
           )}
 
-          <button
-            onClick={() => {
-              setStatus("");
-              setMode(mode === "login" ? "signup" : "login");
-            }}
-            className="mt-6 text-sm text-white/60 underline"
-          >
-            {mode === "login"
-              ? "Need an account? Create one"
-              : "Already have an account? Log in"}
-          </button>
+          {mode === "login" && (
+            <div className="mt-6 flex items-center justify-between text-sm">
+              <button
+                onClick={() => {
+                  setMode("signup");
+                  setStatus("");
+                }}
+                className="text-white/60 underline"
+              >
+                Create an account
+              </button>
+
+              <Link href="/forgot-password" className="text-white/60 underline">
+                Forgot password?
+              </Link>
+            </div>
+          )}
+
+          {mode === "signup" && (
+            <div className="mt-6 text-sm">
+              <button
+                onClick={() => {
+                  setMode("login");
+                  setStatus("");
+                }}
+                className="text-white/60 underline"
+              >
+                Already have an account? Log in
+              </button>
+            </div>
+          )}
         </div>
       </section>
     </main>

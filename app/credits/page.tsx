@@ -34,6 +34,7 @@ type ProfileRow = {
 };
 
 const STANDARD_READING_COST = 8;
+const ENABLE_ALIPAY = process.env.NEXT_PUBLIC_ENABLE_ALIPAY === "true";
 
 function formatPrice(priceCents: number, currency: string) {
   return new Intl.NumberFormat("zh-CN", {
@@ -180,9 +181,9 @@ export default function CreditsPage() {
     return profile.credits_balance < STANDARD_READING_COST;
   }, [profile]);
 
-  async function handleCheckout(packageId: string) {
+  async function handleAlipayCheckout(packageId: string) {
     setError("");
-    setCheckoutLoadingId(packageId);
+    setCheckoutLoadingId(`alipay:${packageId}`);
 
     try {
       const {
@@ -207,15 +208,40 @@ export default function CreditsPage() {
         }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
 
-      if (!response.ok) {
-        setError(data.error || "Failed to create Alipay order.");
+      let data: {
+        formHtml?: string;
+        outTradeNo?: string;
+        error?: string;
+      } | null = null;
+
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.error("ALIPAY_CREATE_ORDER_NON_JSON_RESPONSE:", {
+          status: response.status,
+          statusText: response.statusText,
+          rawTextPreview: rawText.slice(0, 1000),
+        });
+
+        setError(
+          `Alipay create-order did not return JSON. Status: ${
+            response.status
+          }. Response preview: ${rawText.slice(0, 240)}`
+        );
+
         setCheckoutLoadingId(null);
         return;
       }
 
-      if (!data.formHtml) {
+      if (!response.ok) {
+        setError(data?.error || "Failed to create Alipay order.");
+        setCheckoutLoadingId(null);
+        return;
+      }
+
+      if (!data?.formHtml) {
         setError("Alipay payment form was not returned.");
         setCheckoutLoadingId(null);
         return;
@@ -225,6 +251,13 @@ export default function CreditsPage() {
       wrapper.style.display = "none";
       wrapper.innerHTML = data.formHtml;
       document.body.appendChild(wrapper);
+
+      if (data.outTradeNo) {
+        window.localStorage.setItem(
+          "soulloop:lastAlipayOutTradeNo",
+          data.outTradeNo
+        );
+      }
 
       const form = wrapper.querySelector("form") as HTMLFormElement | null;
 
@@ -243,6 +276,65 @@ export default function CreditsPage() {
         error instanceof Error
           ? `Alipay checkout failed: ${error.message}`
           : "Alipay checkout failed."
+      );
+
+      setCheckoutLoadingId(null);
+    }
+  }
+
+  async function handleStripeCheckout(packageId: string) {
+    setError("");
+    setCheckoutLoadingId(`stripe:${packageId}`);
+
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session?.access_token) {
+        setError("Please log in before buying credits.");
+        setCheckoutLoadingId(null);
+        return;
+      }
+
+      const response = await fetch("/api/stripe/create-checkout-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          packageId,
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        url?: string;
+        sessionId?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setError(data.error || "Failed to create Stripe checkout session.");
+        setCheckoutLoadingId(null);
+        return;
+      }
+
+      if (!data.url) {
+        setError("Stripe checkout URL was not returned.");
+        setCheckoutLoadingId(null);
+        return;
+      }
+
+      window.location.href = data.url;
+    } catch (error) {
+      console.error("STRIPE_CHECKOUT_ERROR:", error);
+
+      setError(
+        error instanceof Error
+          ? `Stripe checkout failed: ${error.message}`
+          : "Stripe checkout failed."
       );
 
       setCheckoutLoadingId(null);
@@ -269,12 +361,15 @@ export default function CreditsPage() {
             ← Back to Home
           </Link>
 
-          <div className="flex gap-4 text-sm">
+          <div className="flex flex-wrap gap-4 text-sm">
             <Link href="/chat" className="text-white/60 underline">
               Ask SoulLoop
             </Link>
             <Link href="/history" className="text-white/60 underline">
               History
+            </Link>
+            <Link href="/referrals" className="text-white/60 underline">
+              Referrals
             </Link>
             <Link href="/profile" className="text-white/60 underline">
               Profile
@@ -346,11 +441,31 @@ export default function CreditsPage() {
                 <span className="text-white/70">{profile?.email}</span>
               </p>
             </div>
+
+            <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+              <p className="text-sm uppercase tracking-[0.18em] text-white/35">
+                Usage Rule
+              </p>
+
+              <div className="mt-4 grid gap-3 text-sm text-white/65">
+                <div className="flex justify-between">
+                  <span>Standard Reading Report</span>
+                  <span className="font-semibold text-white">
+                    {STANDARD_READING_COST} credits
+                  </span>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>New User Bonus</span>
+                  <span className="font-semibold text-white">20 credits</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div>
             {error && (
-              <div className="mb-6 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200">
+              <div className="mb-6 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm leading-6 text-red-200">
                 {error}
               </div>
             )}
@@ -367,7 +482,7 @@ export default function CreditsPage() {
                 </div>
 
                 <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-2 text-sm text-emerald-100">
-                  Alipay Sandbox
+                  {ENABLE_ALIPAY ? "Alipay + Stripe" : "Stripe"}
                 </span>
               </div>
 
@@ -397,23 +512,42 @@ export default function CreditsPage() {
                         {formatPrice(item.price_cents, item.currency || "cny")}
                       </p>
 
-                      <button
-                        onClick={() => handleCheckout(item.id)}
-                        disabled={checkoutLoadingId !== null}
-                        className="mt-5 w-full rounded-full bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {checkoutLoadingId === item.id
-                          ? "Opening Alipay..."
-                          : "Buy with Alipay"}
-                      </button>
+                      <div className="mt-5 grid gap-3">
+                        {ENABLE_ALIPAY && (
+                          <button
+                            onClick={() => handleAlipayCheckout(item.id)}
+                            disabled={checkoutLoadingId !== null}
+                            className="w-full rounded-full bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {checkoutLoadingId === `alipay:${item.id}`
+                              ? "Opening Alipay..."
+                              : "Buy with Alipay"}
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleStripeCheckout(item.id)}
+                          disabled={checkoutLoadingId !== null}
+                          className={
+                            ENABLE_ALIPAY
+                              ? "w-full rounded-full border border-white/20 px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              : "w-full rounded-full bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                          }
+                        >
+                          {checkoutLoadingId === `stripe:${item.id}`
+                            ? "Opening Stripe..."
+                            : "Buy with Stripe"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
               <p className="mt-5 text-sm leading-6 text-white/45">
-                Payments are processed through Alipay Sandbox. Credits are added
-                after Alipay sends a verified payment notification.
+                Payments are processed through{" "}
+                {ENABLE_ALIPAY ? "Alipay or Stripe" : "Stripe"}. Credits are
+                added only after verified payment confirmation.
               </p>
             </div>
 
@@ -457,6 +591,12 @@ export default function CreditsPage() {
                           {item.alipay_out_trade_no && (
                             <p className="mt-1 text-xs text-white/30">
                               Alipay Order: {item.alipay_out_trade_no}
+                            </p>
+                          )}
+
+                          {item.stripe_session_id && (
+                            <p className="mt-1 text-xs text-white/30">
+                              Stripe Session: {item.stripe_session_id}
                             </p>
                           )}
                         </div>

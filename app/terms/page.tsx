@@ -28,14 +28,15 @@ export default function TermsPage() {
           </p>
 
           <p>
-            SoulLoop may change, suspend, or discontinue parts of the service at
-            any time during the MVP stage.
+            Credits are digital product credits used inside SoulLoop. Payment
+            completion, credit delivery, and referral reward creation are handled
+            through verified payment provider confirmations.
           </p>
 
           <p>
-            These Terms are a placeholder for MVP testing. Before enabling paid
-            services, they should be reviewed and replaced with a complete legal
-            version suitable for your target markets.
+            Referral rewards and withdrawals may be subject to review,
+            cancellation, or reversal if abuse, fraud, refunds, chargebacks, or
+            policy violations are detected.
           </p>
         </div>
       </section>

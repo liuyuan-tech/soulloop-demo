@@ -63,7 +63,10 @@ Thumbs.db
 .cache
 .tmp
 temp
+.local-logs
+.playwright-cli
 
 # Misc
 *.bak
 *.backup
+LOCAL_FULL_COPY_NOTES.md

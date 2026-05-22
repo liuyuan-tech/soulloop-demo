@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAlipayConfig, verifyAlipayNotify } from "@/lib/alipay";
+import {
+  buildPaymentConfirmationPayload,
+  completePayment,
+  getPaymentForConfirmation,
+} from "@/lib/payments/complete-payment";
 
 export const runtime = "nodejs";
 
@@ -13,6 +17,16 @@ function textResponse(value: string) {
   });
 }
 
+function centsFromAlipayAmount(value: string | undefined) {
+  if (!value) return null;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) return null;
+
+  return Math.round(amount * 100);
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -22,19 +36,36 @@ export async function POST(request: Request) {
       params[key] = String(value);
     });
 
-    const { publicKey } = getAlipayConfig();
+    console.log("ALIPAY_NOTIFY_RECEIVED:", {
+      out_trade_no: params.out_trade_no,
+      trade_no: params.trade_no,
+      trade_status: params.trade_status,
+      total_amount: params.total_amount,
+      app_id: params.app_id,
+      seller_id: params.seller_id,
+      notify_time: params.notify_time,
+    });
 
-    const isValid = verifyAlipayNotify(params, publicKey);
+    const { appId, publicKey } = getAlipayConfig();
 
-    if (!isValid) {
-      console.error("ALIPAY_NOTIFY_VERIFY_FAILED:", params);
+    if (params.app_id !== appId) {
+      console.error("ALIPAY_APP_ID_MISMATCH:", {
+        expected: appId,
+        actual: params.app_id,
+      });
+      return textResponse("failure");
+    }
+
+    const verifyPassed = verifyAlipayNotify(params, publicKey);
+
+    if (!verifyPassed) {
+      console.error("ALIPAY_NOTIFY_VERIFY_FAILED_BLOCKED");
       return textResponse("failure");
     }
 
     const outTradeNo = params.out_trade_no;
     const alipayTradeNo = params.trade_no;
     const tradeStatus = params.trade_status;
-    const totalAmount = params.total_amount;
 
     if (!outTradeNo) {
       console.error("ALIPAY_NOTIFY_MISSING_OUT_TRADE_NO:", params);
@@ -46,112 +77,50 @@ export async function POST(request: Request) {
         outTradeNo,
         tradeStatus,
       });
-
       return textResponse("success");
     }
 
-    const { data: payment, error: paymentError } = await supabaseAdmin
-      .from("payments")
-      .select(
-        "id,user_id,status,amount_total,currency,credits_granted,alipay_out_trade_no,alipay_trade_no"
-      )
-      .eq("alipay_out_trade_no", outTradeNo)
-      .single();
+    const payment = await getPaymentForConfirmation({
+      provider: "alipay",
+      alipayOutTradeNo: outTradeNo,
+      reason: "alipay_checkout",
+    });
 
-    if (paymentError || !payment) {
-      console.error("ALIPAY_PAYMENT_NOT_FOUND:", paymentError);
-      return textResponse("failure");
-    }
+    const verifiedAmountTotal = centsFromAlipayAmount(params.total_amount);
 
-    if (payment.status === "completed") {
-      return textResponse("success");
-    }
-
-    const expectedAmount = (payment.amount_total / 100).toFixed(2);
-
-    if (totalAmount && Number(totalAmount).toFixed(2) !== expectedAmount) {
+    if (
+      typeof verifiedAmountTotal === "number" &&
+      typeof payment.amount_total === "number" &&
+      verifiedAmountTotal !== payment.amount_total
+    ) {
       console.error("ALIPAY_AMOUNT_MISMATCH:", {
         outTradeNo,
-        expectedAmount,
-        totalAmount,
+        expectedAmountCents: payment.amount_total,
+        verifiedAmountCents: verifiedAmountTotal,
+        totalAmount: params.total_amount,
       });
-
       return textResponse("failure");
     }
 
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .select("id,credits_balance")
-      .eq("id", payment.user_id)
-      .single();
+    const result = await completePayment({
+      provider: "alipay",
+      paymentId: payment.id,
+      alipayOutTradeNo: outTradeNo,
+      providerTradeNo: alipayTradeNo || null,
+      providerOrderId: alipayTradeNo || outTradeNo,
+      reason: "alipay_checkout",
+      verifiedAmountTotal,
+    });
 
-    if (profileError || !profile) {
-      console.error("ALIPAY_PROFILE_NOT_FOUND:", profileError);
-      return textResponse("failure");
-    }
-
-    const creditsToGrant =
-      typeof payment.credits_granted === "number"
-        ? payment.credits_granted
-        : 0;
-
-    if (creditsToGrant <= 0) {
-      console.error("ALIPAY_INVALID_CREDITS:", {
-        outTradeNo,
-        creditsToGrant,
-      });
-
-      return textResponse("failure");
-    }
-
-    const currentCredits =
-      typeof profile.credits_balance === "number"
-        ? profile.credits_balance
-        : 0;
-
-    const newCreditsBalance = currentCredits + creditsToGrant;
-
-    const { error: profileUpdateError } = await supabaseAdmin
-      .from("profiles")
-      .update({
-        credits_balance: newCreditsBalance,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", payment.user_id);
-
-    if (profileUpdateError) {
-      console.error("ALIPAY_PROFILE_UPDATE_ERROR:", profileUpdateError);
-      return textResponse("failure");
-    }
-
-    const { error: paymentUpdateError } = await supabaseAdmin
-      .from("payments")
-      .update({
-        provider: "alipay",
-        status: "completed",
-        alipay_trade_no: alipayTradeNo || null,
-      })
-      .eq("id", payment.id);
-
-    if (paymentUpdateError) {
-      console.error("ALIPAY_PAYMENT_UPDATE_ERROR:", paymentUpdateError);
-      return textResponse("failure");
-    }
-
-    const { error: transactionError } = await supabaseAdmin
-      .from("credit_transactions")
-      .insert({
-        user_id: payment.user_id,
-        amount: creditsToGrant,
-        type: "purchase",
-        reason: "alipay_checkout",
-        alipay_out_trade_no: outTradeNo,
-      });
-
-    if (transactionError) {
-      console.error("ALIPAY_TRANSACTION_INSERT_ERROR:", transactionError);
-      return textResponse("failure");
-    }
+    console.log("ALIPAY_NOTIFY_PROCESS_SUCCESS:", {
+      outTradeNo,
+      alipayTradeNo,
+      payment: buildPaymentConfirmationPayload(result.payment),
+      creditsBalance: result.creditsBalance,
+      alreadyCompleted: result.alreadyCompleted,
+      verifyPassed,
+      sandboxBypassUsed: false,
+    });
 
     return textResponse("success");
   } catch (error) {

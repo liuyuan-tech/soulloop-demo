@@ -11,8 +11,9 @@ export default function PricingPage() {
         <h1 className="mt-10 text-center text-5xl font-bold">Pricing</h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-center leading-8 text-white/60">
-          SoulLoop will use Mystic Credits for readings. This pricing page is
-          prepared for the paid version. Payments are not enabled yet.
+          SoulLoop uses credits for AI-powered symbolic reading and
+          self-reflection entertainment experiences. Available checkout methods
+          may include Alipay and Stripe depending on your region.
         </p>
 
         <div className="mt-12 grid gap-6 md:grid-cols-3">
@@ -30,9 +31,12 @@ export default function PricingPage() {
               <p className="mt-4 text-white/80">{credits}</p>
               <p className="mt-3 text-white/50">{desc}</p>
 
-              <button className="mt-8 w-full rounded-full bg-white px-6 py-3 font-semibold text-black">
-                Coming Soon
-              </button>
+              <Link
+                href="/credits"
+                className="mt-8 block w-full rounded-full bg-white px-6 py-3 text-center font-semibold text-black"
+              >
+                Buy Credits
+              </Link>
             </div>
           ))}
         </div>
@@ -59,6 +63,11 @@ export default function PricingPage() {
             ))}
           </div>
         </div>
+
+        <p className="mt-8 text-sm leading-6 text-white/45">
+          SoulLoop readings are for entertainment and self-reflection only. They
+          are not medical, legal, financial, or professional advice.
+        </p>
       </section>
     </main>
   );

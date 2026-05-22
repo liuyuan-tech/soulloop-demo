@@ -119,6 +119,8 @@ export default function HomePage() {
           <div className="flex gap-6">
             <Link href="/pricing">Pricing</Link>
             <Link href="/disclaimer">Disclaimer</Link>
+            <Link href="/refund-policy">Refund</Link>
+            <Link href="/contact">Contact</Link>
             <Link href="/privacy">Privacy</Link>
             <Link href="/terms">Terms</Link>
           </div>

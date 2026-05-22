@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { applyCreditTransaction } from "@/lib/credits/apply-credit-transaction";
 
 type SoulLoopProfile = {
   birthDate?: string;
@@ -27,6 +28,17 @@ type DemoChatRequest = {
   language?: string;
   tone?: string;
   depth?: string;
+};
+
+type DatabaseProfileRow = {
+  birth_date?: string | null;
+  birth_time?: string | null;
+  birth_place?: string | null;
+  gender?: string | null;
+  current_focus?: string | null;
+  relationship_status?: string | null;
+  career_status?: string | null;
+  preferred_language?: string | null;
 };
 
 const STANDARD_READING_COST = 8;
@@ -579,7 +591,7 @@ Return only the final answer. Do not explain your reasoning process.
 `;
 }
 
-function mapDatabaseProfile(data: any): SoulLoopProfile {
+function mapDatabaseProfile(data: DatabaseProfileRow): SoulLoopProfile {
   return {
     birthDate: data.birth_date || "",
     birthTime: data.birth_time || "",
@@ -804,47 +816,28 @@ export async function POST(request: Request) {
       );
     }
 
-    const remainingCredits = currentCredits - creditsUsed;
+    let remainingCredits = currentCredits - creditsUsed;
 
-    const { error: profileUpdateError } = await supabaseAdmin
-      .from("profiles")
-      .update({
-        credits_balance: remainingCredits,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", user.id);
-
-    if (profileUpdateError) {
-      console.error("CREDIT_UPDATE_ERROR:", profileUpdateError);
-
-      return NextResponse.json(
-        {
-          error:
-            "Reading was saved, but credits update failed. Please contact support.",
-          remainingCredits: currentCredits,
-        },
-        { status: 500 }
-      );
-    }
-
-    const { error: transactionError } = await supabaseAdmin
-      .from("credit_transactions")
-      .insert({
-        user_id: user.id,
+    try {
+      const creditResult = await applyCreditTransaction({
+        userId: user.id,
         amount: -creditsUsed,
         type: "usage",
         reason: "standard_reading",
-        message_id: messageRow.id,
+        messageId: messageRow.id,
       });
 
-    if (transactionError) {
-      console.error("CREDIT_TRANSACTION_ERROR:", transactionError);
+      if (typeof creditResult.creditsBalance === "number") {
+        remainingCredits = creditResult.creditsBalance;
+      }
+    } catch (creditError) {
+      console.error("CREDIT_TRANSACTION_ERROR:", creditError);
 
       return NextResponse.json(
         {
           error:
-            "Reading was saved and credits were updated, but transaction logging failed. Please contact support.",
-          remainingCredits,
+            "Reading was saved, but the atomic credit transaction failed. Please contact support.",
+          remainingCredits: currentCredits,
         },
         { status: 500 }
       );

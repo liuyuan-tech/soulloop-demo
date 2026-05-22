@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "launch:preflight": "tools/launch_preflight.sh",
+    "test:providers": "node tools/payment_provider_connectivity.mjs",
+    "test:payments": "node tools/sandbox_payment_smoke_test.mjs",
+    "test:stripe:direct": "node tools/direct_stripe_checkout_smoke.mjs",
+    "test:alipay:direct": "node tools/direct_alipay_checkout_smoke.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
