@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import {
+  READING_MODES,
+  type ReadingModeId,
+} from "@/lib/readings/options";
 
 type CreditPackage = {
   id: string;
@@ -31,6 +35,13 @@ type CreditTransaction = {
 type ProfileRow = {
   credits_balance: number;
   email: string | null;
+};
+
+type EntitlementsResponse = {
+  ownedModes?: ReadingModeId[];
+  creditsBalance?: number | null;
+  error?: string;
+  code?: string;
 };
 
 const STANDARD_READING_COST = 8;
@@ -75,11 +86,17 @@ export default function CreditsPage() {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [ownedModes, setOwnedModes] = useState<ReadingModeId[]>([
+    "eastern_wisdom",
+  ]);
   const [loading, setLoading] = useState(true);
   const [checkoutLoadingId, setCheckoutLoadingId] = useState<string | null>(
     null
   );
+  const [modeUnlockLoadingId, setModeUnlockLoadingId] =
+    useState<ReadingModeId | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     async function loadCreditsPage() {
@@ -103,7 +120,7 @@ export default function CreditsPage() {
           return;
         }
 
-        const [profileResult, packagesResult, transactionsResult] =
+        const [profileResult, packagesResult, transactionsResult, entitlementsResult] =
           await Promise.all([
             supabase
               .from("profiles")
@@ -126,6 +143,12 @@ export default function CreditsPage() {
               )
               .order("created_at", { ascending: false })
               .limit(50),
+
+            fetch("/api/reading-modes/entitlements", {
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            }),
           ]);
 
         if (profileResult.error) {
@@ -154,6 +177,21 @@ export default function CreditsPage() {
           (transactionsResult.data || []) as CreditTransaction[]
         );
 
+        const entitlementsData =
+          (await entitlementsResult.json().catch(() => ({}))) as
+            | EntitlementsResponse
+            | Record<string, never>;
+
+        if (Array.isArray(entitlementsData.ownedModes)) {
+          setOwnedModes(entitlementsData.ownedModes);
+        }
+
+        if (entitlementsData.code) {
+          setNotice(
+            "Paid mode unlocks need the latest Supabase migration before they can be used."
+          );
+        }
+
         setLoading(false);
       } catch (error) {
         console.error("LOAD_CREDITS_PAGE_ERROR:", error);
@@ -180,6 +218,14 @@ export default function CreditsPage() {
     if (!profile) return false;
     return profile.credits_balance < STANDARD_READING_COST;
   }, [profile]);
+
+  const paidModePacks = READING_MODES.filter(
+    (item) => item.status !== "Included"
+  );
+  const highestPackUnlockCost = paidModePacks.reduce(
+    (max, item) => Math.max(max, item.unlockCost),
+    0
+  );
 
   async function handleAlipayCheckout(packageId: string) {
     setError("");
@@ -341,6 +387,76 @@ export default function CreditsPage() {
     }
   }
 
+  async function handleUnlockMode(mode: ReadingModeId) {
+    setError("");
+    setNotice("");
+    setModeUnlockLoadingId(mode);
+
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session?.access_token) {
+        setError("Please log in before unlocking a mode pack.");
+        setModeUnlockLoadingId(null);
+        return;
+      }
+
+      const response = await fetch("/api/reading-modes/entitlements", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ mode }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as
+        | EntitlementsResponse
+        | Record<string, never>;
+
+      if (!response.ok) {
+        setError(
+          data.error ||
+            "Failed to unlock this reading mode. Please try again."
+        );
+        setModeUnlockLoadingId(null);
+        return;
+      }
+
+      if (Array.isArray(data.ownedModes)) {
+        setOwnedModes(data.ownedModes);
+      }
+
+      if (typeof data.creditsBalance === "number") {
+        setProfile((current) =>
+          current
+            ? {
+                ...current,
+                credits_balance: data.creditsBalance as number,
+              }
+            : current
+        );
+      }
+
+      const modeLabel =
+        READING_MODES.find((item) => item.id === mode)?.label || mode;
+      setNotice(`${modeLabel} is now unlocked for your account.`);
+    } catch (error) {
+      console.error("READING_MODE_UNLOCK_ERROR:", error);
+
+      setError(
+        error instanceof Error
+          ? `Mode unlock failed: ${error.message}`
+          : "Mode unlock failed."
+      );
+    } finally {
+      setModeUnlockLoadingId(null);
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[#101020] px-6 py-16 text-white">
@@ -388,8 +504,10 @@ export default function CreditsPage() {
             </h1>
 
             <p className="mt-4 max-w-2xl text-lg leading-8 text-white/60">
-              Credits power SoulLoop Reading Reports. Each standard reading
-              currently costs {STANDARD_READING_COST} credits.
+              Credits power both one-time pack unlocks and ongoing readings.
+              Eastern Wisdom starts at {STANDARD_READING_COST} credits per
+              reading, while paid packs unlock once and then charge only when
+              used.
             </p>
 
             <div className="mt-8 rounded-[32px] border border-white/10 bg-white/5 p-8">
@@ -459,7 +577,118 @@ export default function CreditsPage() {
                   <span>New User Bonus</span>
                   <span className="font-semibold text-white">20 credits</span>
                 </div>
+
+                <div className="flex justify-between">
+                  <span>Highest Pack Unlock</span>
+                  <span className="font-semibold text-white">
+                    {highestPackUnlockCost} credits
+                  </span>
+                </div>
               </div>
+            </div>
+
+            <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+              <p className="text-sm uppercase tracking-[0.18em] text-white/35">
+                Mode Packs
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold">
+                Co-Star style personalization layers
+              </h2>
+
+              <div className="mt-5 grid gap-3">
+                {paidModePacks.map((item) => {
+                  const owned = ownedModes.includes(item.id);
+                  const canAfford =
+                    typeof profile?.credits_balance === "number" &&
+                    profile.credits_balance >= item.unlockCost;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-3xl border border-white/10 bg-black/20 p-5"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <h3 className="font-semibold text-white">
+                            {item.label}
+                          </h3>
+                          <p className="mt-2 text-sm leading-6 text-white/55">
+                            {item.description}
+                          </p>
+                        </div>
+
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs ${
+                            owned
+                              ? "bg-white text-black"
+                              : "border border-white/15 text-white/65"
+                          }`}
+                        >
+                          {owned ? "Unlocked" : item.status}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 text-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-white/45">
+                            One-time unlock
+                          </span>
+                          <span className="font-semibold text-white">
+                            {item.unlockCost} credits
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-white/45">
+                            Enhanced reading
+                          </span>
+                          <span className="font-semibold text-white">
+                            {item.creditCost} credits
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="mt-4 text-sm leading-6 text-white/45">
+                        {owned
+                          ? `This pack stays available on your account. Future ${item.shortLabel.toLowerCase()} readings cost ${item.creditCost} credits each.`
+                          : canAfford
+                            ? `You can unlock this now and still keep ${Math.max(
+                                0,
+                                (profile?.credits_balance || 0) - item.unlockCost
+                              )} credits for readings.`
+                            : `You need ${Math.max(
+                                0,
+                                item.unlockCost - (profile?.credits_balance || 0)
+                              )} more credits before this one-time unlock is available.`}
+                      </p>
+
+                      <button
+                        onClick={() => handleUnlockMode(item.id)}
+                        disabled={
+                          owned ||
+                          modeUnlockLoadingId !== null ||
+                          !canAfford
+                        }
+                        className="mt-5 w-full rounded-full bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {owned
+                          ? "Already unlocked"
+                          : modeUnlockLoadingId === item.id
+                            ? "Unlocking..."
+                            : canAfford
+                              ? `Unlock ${item.shortLabel}`
+                              : "Need more credits"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="mt-4 text-sm leading-6 text-white/45">
+                Buy credits once, unlock the mode pack you want, then spend
+                credits on enhanced readings inside that mode.
+              </p>
             </div>
           </div>
 
@@ -467,6 +696,12 @@ export default function CreditsPage() {
             {error && (
               <div className="mb-6 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm leading-6 text-red-200">
                 {error}
+              </div>
+            )}
+
+            {notice && (
+              <div className="mb-6 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-sm leading-6 text-emerald-100">
+                {notice}
               </div>
             )}
 
@@ -491,6 +726,9 @@ export default function CreditsPage() {
                   const packageReadings = Math.floor(
                     item.credits / STANDARD_READING_COST
                   );
+                  const unlockablePacks = paidModePacks.filter(
+                    (mode) => item.credits >= mode.unlockCost
+                  );
 
                   return (
                     <div
@@ -506,6 +744,16 @@ export default function CreditsPage() {
 
                       <p className="mt-3 text-sm leading-6 text-white/55">
                         About {packageReadings} standard reading reports
+                      </p>
+
+                      <p className="mt-3 text-sm leading-6 text-white/45">
+                        Unlocks{" "}
+                        {unlockablePacks.length === paidModePacks.length
+                          ? "any current paid pack"
+                          : `${unlockablePacks.length} paid pack${
+                              unlockablePacks.length === 1 ? "" : "s"
+                            }`}{" "}
+                        before reading usage.
                       </p>
 
                       <p className="mt-4 text-lg font-semibold">

@@ -16,6 +16,12 @@ Paste and run the full content of:
 /Users/zebramachine/Documents/soulloop/supabase/migrations/20260522000000_payment_completion.sql
 ```
 
+Then paste and run the full content of:
+
+```text
+/Users/zebramachine/Documents/soulloop/supabase/migrations/20260524000000_reading_mode_entitlements.sql
+```
+
 This SQL does the following:
 
 - adds Stripe/payment completion columns to `payments`;
@@ -25,6 +31,9 @@ This SQL does the following:
 - creates `public.apply_credit_transaction(...)`;
 - creates `public.complete_credit_payment(...)`;
 - grants RPC execution to `service_role`.
+- creates `reading_mode_entitlements`;
+- enables own-row RLS for authenticated users;
+- creates `public.unlock_reading_mode(...)` for credits-based paid mode unlocks.
 
 Expected Supabase result:
 
@@ -50,6 +59,7 @@ export PATH="$HOME/.codex-local-tools/node-v24.14.0-darwin-arm64/bin:$PATH"
 npm run launch:preflight
 npm run test:providers
 npm run test:payments
+npm run test:entitlements
 ```
 
 Expected:
@@ -57,6 +67,7 @@ Expected:
 - `launch:preflight` passes;
 - `test:providers` shows Stripe and Alipay reachable;
 - `test:payments` passes Stripe signed webhook, idempotency, and Alipay unsigned-notify rejection.
+- `test:entitlements` creates temporary users, verifies `reading_mode_entitlements` schema access, confirms RLS only exposes own rows, and validates `unlock_reading_mode` debit + idempotency.
 
 Current status:
 

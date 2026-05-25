@@ -5,17 +5,17 @@ export default function HomePage() {
     <main className="min-h-screen bg-[#101020] text-white">
       <section className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-6 text-center">
         <p className="mb-4 rounded-full border border-white/20 px-4 py-2 text-sm text-white/70">
-          AI Eastern Wisdom Reflection
+          AI Self-Discovery Platform
         </p>
 
         <h1 className="max-w-5xl text-5xl font-bold leading-tight md:text-7xl">
-          Ask life questions through Eastern wisdom.
+          Ask life questions through symbolic modes that understand you.
         </h1>
 
         <p className="mt-6 max-w-2xl text-lg leading-8 text-white/70">
-          SoulLoop transforms your personal profile and life questions into
-          symbolic reflections inspired by I Ching-style thinking, Bagua,
-          Yin-Yang, Five Elements, and Zi Wei Dou Shu-style life themes.
+          SoulLoop combines your saved profile, question history, and selected
+          reading mode to generate direct, personal reflections through Eastern
+          Wisdom, Tarot, Color Personality, and Daily Loop lenses.
         </p>
 
         <div className="mt-10 flex flex-col gap-4 sm:flex-row">
@@ -42,34 +42,34 @@ export default function HomePage() {
 
       <section className="mx-auto max-w-6xl px-6 py-24">
         <h2 className="text-center text-4xl font-bold">
-          What SoulLoop helps you reflect on
+          Choose a question theme
         </h2>
 
         <div className="mt-12 grid gap-6 md:grid-cols-3">
           {[
             [
-              "Love & Relationships",
-              "Explore emotional timing, communication patterns, boundaries, and relationship uncertainty.",
+              "Love",
+              "Explore attraction, emotional timing, longing, and self-respect without turning uncertainty into obsession.",
             ],
             [
-              "Career & Decisions",
-              "Reflect on timing, direction, strengths, preparation, risk, and next steps.",
+              "Career",
+              "Reflect on direction, capability, preparation, risk, visibility, and the next move that actually matters.",
             ],
             [
-              "Money & Growth",
-              "Look at wealth questions through discipline, value creation, accumulation, and long-term cycles.",
+              "Money",
+              "Read wealth questions through resource discipline, value creation, patience, and grounded risk awareness.",
             ],
             [
-              "Dream Interpretation",
-              "Read dreams as emotional and symbolic messages, not fixed predictions.",
+              "Self",
+              "Understand inner patterns, motivation, habits, emotional loops, and the part of you asking for attention.",
             ],
             [
-              "Daily Energy",
-              "Use your profile as context for symbolic daily focus and practical guidance.",
+              "Decision",
+              "Compare choices through timing, tradeoffs, pressure, agency, and one reversible next step.",
             ],
             [
-              "Self-Discovery",
-              "Understand inner patterns, recurring tensions, emotional themes, and personal growth signals.",
+              "Relationship",
+              "Look at communication, boundaries, roles, repair, and whether the dynamic is supporting your clarity.",
             ],
           ].map(([title, text]) => (
             <div
@@ -90,9 +90,9 @@ export default function HomePage() {
           <div className="mt-12 grid gap-6 md:grid-cols-4">
             {[
               ["1", "Set up your SoulLoop profile"],
-              ["2", "Share your birth and life context"],
-              ["3", "Ask your life question"],
-              ["4", "Receive a personalized symbolic reading"],
+              ["2", "Pick a question theme"],
+              ["3", "Choose a reading mode"],
+              ["4", "Receive a cross-checked answer"],
             ].map(([step, text]) => (
               <div key={step} className="rounded-3xl bg-black/20 p-6">
                 <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white text-lg font-bold text-black">

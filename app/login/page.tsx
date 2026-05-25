@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
@@ -175,15 +176,27 @@ export default function LoginPage() {
       return;
     }
 
+    if (!confirmPassword) {
+      setStatus("Please enter your password again to confirm.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setStatus("Passwords do not match. 两次输入的密码不一致。");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const normalizedInviteCode = normalizeInviteCode(inviteCode);
+      const emailRedirectTo = `${window.location.origin}/login`;
 
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
+          emailRedirectTo,
           data: {
             referral_code: normalizedInviteCode || null,
           },
@@ -202,12 +215,9 @@ export default function LoginPage() {
           setPendingInviteCode(normalizedInviteCode);
         }
 
-        setStatus(
-          normalizedInviteCode
-            ? "Account created. Please log in to complete invite code binding."
-            : "Account created. Please log in to continue."
+        router.push(
+          `/signup-check-email?email=${encodeURIComponent(email.trim())}`
         );
-        setMode("login");
         return;
       }
 
@@ -288,6 +298,7 @@ export default function LoginPage() {
               onClick={() => {
                 setMode("login");
                 setStatus("");
+                setConfirmPassword("");
               }}
               className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold ${
                 mode === "login"
@@ -337,6 +348,33 @@ export default function LoginPage() {
             />
 
             {mode === "signup" && (
+              <input
+                type="password"
+                placeholder="Confirm password / 再次输入密码"
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  setStatus("");
+                }}
+                className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none placeholder:text-white/30"
+              />
+            )}
+
+            {mode === "signup" && password && confirmPassword && (
+              <p
+                className={`text-sm ${
+                  password === confirmPassword
+                    ? "text-emerald-200/80"
+                    : "text-red-200/80"
+                }`}
+              >
+                {password === confirmPassword
+                  ? "Passwords match. 两次密码一致。"
+                  : "Passwords do not match. 两次输入的密码不一致。"}
+              </p>
+            )}
+
+            {mode === "signup" && (
               <div>
                 <input
                   type="text"
@@ -358,7 +396,13 @@ export default function LoginPage() {
 
             <button
               onClick={handleSubmit}
-              disabled={loading || !email || !password}
+              disabled={
+                loading ||
+                !email ||
+                !password ||
+                (mode === "signup" &&
+                  (!confirmPassword || password !== confirmPassword))
+              }
               className="w-full rounded-full bg-white px-8 py-4 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading
@@ -401,6 +445,7 @@ export default function LoginPage() {
                 onClick={() => {
                   setMode("login");
                   setStatus("");
+                  setConfirmPassword("");
                 }}
                 className="text-white/60 underline"
               >

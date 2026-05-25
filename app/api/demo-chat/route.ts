@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { applyCreditTransaction } from "@/lib/credits/apply-credit-transaction";
+import {
+  getReadingMode,
+  normalizeReadingMode,
+  normalizeReadingTopic,
+  type ReadingModeId,
+  type ReadingTopicId,
+} from "@/lib/readings/options";
 
 type SoulLoopProfile = {
   birthDate?: string;
@@ -15,9 +22,13 @@ type SoulLoopProfile = {
 
 type SymbolicLens = {
   topic: string;
+  readingMode: ReadingModeId;
+  modeLabel: string;
   bagua: string[];
   elements: string[];
   ziwei: string[];
+  modeMarkers: string[];
+  crossValidation: string[];
   focus: string;
   interpretation: string;
 };
@@ -25,6 +36,7 @@ type SymbolicLens = {
 type DemoChatRequest = {
   topic?: string;
   question?: string;
+  readingMode?: string;
   language?: string;
   tone?: string;
   depth?: string;
@@ -41,6 +53,12 @@ type DatabaseProfileRow = {
   preferred_language?: string | null;
 };
 
+type RecentMessageRow = {
+  topic?: string | null;
+  question?: string | null;
+  created_at?: string | null;
+};
+
 const STANDARD_READING_COST = 8;
 
 function normalizeLabel(value?: string) {
@@ -55,6 +73,8 @@ function normalizeLabel(value?: string) {
     love: "Love / Relationship",
     career: "Career",
     money: "Money",
+    self: "Self",
+    relationship: "Relationship",
     daily_energy: "Daily Energy",
     decision: "Decision",
     self_growth: "Self-Growth",
@@ -120,13 +140,13 @@ function detectLanguage(text: string, languageChoice = "same") {
       languageInstruction:
         "用户选择中文。你必须全程使用中文回答，包括所有标题。不要输出英文。",
       headings: {
-        energy: "能量主题",
-        symbolic: "命理象征",
-        profile: "个人背景映射",
-        meaning: "这意味着什么",
-        guidance: "给你的建议",
-        avoid: "需要避免",
-        reflection: "反思问题",
+        conclusion: "一句话结论",
+        why: "为什么是这个答案",
+        resonance: "为什么会击中你",
+        action: "今日行动",
+        avoid: "今日禁忌",
+        alternative: "另一种可能",
+        cross: "多模式交叉验证",
         disclaimer: "免责声明",
       },
     };
@@ -137,13 +157,13 @@ function detectLanguage(text: string, languageChoice = "same") {
       languageInstruction:
         "The user selected English. You must answer entirely in English, including all headings. Do not output Chinese.",
       headings: {
-        energy: "Energy Theme",
-        symbolic: "Symbolic Pattern",
-        profile: "Personal Context Mapping",
-        meaning: "What This Means",
-        guidance: "Guidance",
-        avoid: "What to Avoid",
-        reflection: "Reflection Question",
+        conclusion: "One-Sentence Answer",
+        why: "Why This Answer",
+        resonance: "Why It May Feel Personal",
+        action: "Today's Action",
+        avoid: "Today's Avoidance",
+        alternative: "Another Possibility",
+        cross: "Multi-Mode Cross-Check",
         disclaimer: "Disclaimer",
       },
     };
@@ -156,13 +176,13 @@ function detectLanguage(text: string, languageChoice = "same") {
       languageInstruction:
         "用户使用中文提问。你必须全程使用中文回答，包括所有标题。不要输出英文。",
       headings: {
-        energy: "能量主题",
-        symbolic: "命理象征",
-        profile: "个人背景映射",
-        meaning: "这意味着什么",
-        guidance: "给你的建议",
-        avoid: "需要避免",
-        reflection: "反思问题",
+        conclusion: "一句话结论",
+        why: "为什么是这个答案",
+        resonance: "为什么会击中你",
+        action: "今日行动",
+        avoid: "今日禁忌",
+        alternative: "另一种可能",
+        cross: "多模式交叉验证",
         disclaimer: "免责声明",
       },
     };
@@ -172,13 +192,13 @@ function detectLanguage(text: string, languageChoice = "same") {
     languageInstruction:
       "The user asked in English. You must answer entirely in English, including all headings. Do not output Chinese.",
     headings: {
-      energy: "Energy Theme",
-      symbolic: "Symbolic Pattern",
-      profile: "Personal Context Mapping",
-      meaning: "What This Means",
-      guidance: "Guidance",
-      avoid: "What to Avoid",
-      reflection: "Reflection Question",
+      conclusion: "One-Sentence Answer",
+      why: "Why This Answer",
+      resonance: "Why It May Feel Personal",
+      action: "Today's Action",
+      avoid: "Today's Avoidance",
+      alternative: "Another Possibility",
+      cross: "Multi-Mode Cross-Check",
       disclaimer: "Disclaimer",
     },
   };
@@ -192,14 +212,12 @@ function getTopicInstruction(topic: string) {
       "The user is asking about career. Focus on timing, capability, preparation, decision quality, risk awareness, and value creation. Do not guarantee success or failure.",
     money:
       "The user is asking about money or wealth. Focus on discipline, skills, long-term value creation, risk control, patience, and opportunity awareness. Do not provide investment advice or promise wealth.",
-    dream:
-      "The user is asking about a dream. Interpret it as an emotional and symbolic reflection, not as a literal prediction.",
-    daily_energy:
-      "The user wants daily energy guidance. Keep it practical, reflective, and action-oriented.",
+    self:
+      "The user is asking about the self. Focus on self-understanding, habits, identity, emotional patterns, inner conflict, and grounded self-development.",
     decision:
       "The user is asking about a decision. Help compare tensions, timing, risks, and next steps. Do not make the decision for the user.",
-    self_growth:
-      "The user is asking about personal growth. Focus on emotional clarity, habits, inner patterns, and grounded next steps.",
+    relationship:
+      "The user is asking about a relationship dynamic. Focus on communication, mutual expectations, boundaries, roles, repair, and emotional safety. Do not promise reconciliation or a fixed outcome.",
     general:
       "The user is asking a general life question. Give a balanced symbolic reflection with practical guidance.",
   };
@@ -234,17 +252,136 @@ function getDepthInstruction(depth: string) {
   return map[depth] || map.standard;
 }
 
+function getModeMarkers(mode: ReadingModeId, topic: ReadingTopicId) {
+  const tarotMarkers: Record<ReadingTopicId, string[]> = {
+    love: ["Two of Cups", "The Moon", "Temperance"],
+    career: ["The Chariot", "Eight of Pentacles", "Three of Wands"],
+    money: ["Four of Pentacles", "Six of Pentacles", "Wheel of Fortune"],
+    self: ["The Hermit", "The Star", "Temperance"],
+    decision: ["Justice", "The Hanged Man", "Two of Swords"],
+    relationship: ["The Lovers", "Six of Cups", "Strength"],
+  };
+
+  const colorMarkers: Record<ReadingTopicId, string[]> = {
+    love: ["Blue: attachment and empathy", "Gold: security needs"],
+    career: ["Green: analysis and mastery", "Gold: structure and follow-through"],
+    money: ["Gold: resource discipline", "Orange: opportunity appetite"],
+    self: ["Blue: emotional depth", "Green: self-observation"],
+    decision: ["Green: clarity", "Orange: action", "Gold: risk boundary"],
+    relationship: ["Blue: connection", "Gold: trust", "Orange: autonomy"],
+  };
+
+  const dailyMarkers: Record<ReadingTopicId, string[]> = {
+    love: ["Reminder: do not chase ambiguity", "Action: make one clear bid"],
+    career: ["Reminder: momentum needs structure", "Action: finish one visible task"],
+    money: ["Reminder: value before velocity", "Action: review one spending pattern"],
+    self: ["Reminder: name the feeling first", "Action: choose one stabilizing habit"],
+    decision: ["Reminder: pressure is not clarity", "Action: define the next reversible step"],
+    relationship: ["Reminder: repair beats performance", "Action: ask one clean question"],
+  };
+
+  if (mode === "tarot") return tarotMarkers[topic];
+  if (mode === "color_personality") return colorMarkers[topic];
+  if (mode === "daily_loop") return dailyMarkers[topic];
+
+  return ["I Ching-style timing", "Bagua position", "Five Elements balance"];
+}
+
+function getModeInstruction(mode: ReadingModeId, topic: ReadingTopicId) {
+  const topicLabel = normalizeLabel(topic);
+
+  const map: Record<ReadingModeId, string> = {
+    eastern_wisdom:
+      "Use Eastern Wisdom as the main included mode. Lean on I Ching-style timing, Bagua movement/stillness, Yin-Yang balance, Five Elements, and Zi Wei Dou Shu-style life themes. Do not claim a real hexagram or chart was calculated.",
+    tarot:
+      `Use Tarot as a paid enhanced pack for ${topicLabel}. Use the provided tarot archetypes as a symbolic spread, then cross-check them with the Eastern Wisdom baseline. Do not claim that physical cards were shuffled or drawn.`,
+    color_personality:
+      `Use Color Personality as a paid enhanced pack for ${topicLabel}. Translate the user's question into color-style motivation, stress response, communication needs, and decision bias, then cross-check with the Eastern Wisdom baseline. Do not claim this is a clinical personality diagnosis.`,
+    daily_loop:
+      `Use Daily Loop as a paid enhanced pack for ${topicLabel}. Make the answer feel like a daily personalized guidance loop: today's reminder, today's action, today's avoidance, and one evening check-in. Cross-check the daily message with the Eastern Wisdom baseline.`,
+  };
+
+  return map[mode];
+}
+
+function getCrossValidation({
+  mode,
+  topic,
+  lens,
+}: {
+  mode: ReadingModeId;
+  topic: ReadingTopicId;
+  lens: Pick<SymbolicLens, "bagua" | "elements" | "ziwei">;
+}) {
+  const modeLabel = getReadingMode(mode).label;
+  const topicLabel = normalizeLabel(topic);
+  const baseline = `Eastern Wisdom baseline: ${lens.bagua[0]} and ${lens.elements[0]} frame the ${topicLabel} question through timing, balance, and grounded action.`;
+
+  if (mode === "eastern_wisdom") {
+    return [
+      baseline,
+      `Zi Wei-style theme: ${lens.ziwei[0]} adds a life-pattern lens without treating the profile as fate.`,
+      "Practical check: the answer should leave the user with one calm next step, not dependency.",
+    ];
+  }
+
+  return [
+    baseline,
+    `${modeLabel} pack: the selected mode adds a second symbolic language for the same question.`,
+    "Common thread: when both modes point to the same tension, emphasize that overlap as the most reliable reflection.",
+  ];
+}
+
 function getSymbolicLens({
   topic,
+  readingMode,
   question,
   profile,
 }: {
   topic: string;
+  readingMode: ReadingModeId;
   question: string;
   profile?: SoulLoopProfile | null;
 }): SymbolicLens {
   const q = question.toLowerCase();
-  const effectiveTopic = topic || profile?.currentFocus || "general";
+  const effectiveTopic = normalizeReadingTopic(topic || profile?.currentFocus);
+  const mode = getReadingMode(readingMode);
+  const withMode = (
+    lens: Omit<
+      SymbolicLens,
+      "readingMode" | "modeLabel" | "modeMarkers" | "crossValidation"
+    >
+  ): SymbolicLens => ({
+    ...lens,
+    readingMode,
+    modeLabel: mode.label,
+    modeMarkers: getModeMarkers(readingMode, effectiveTopic),
+    crossValidation: getCrossValidation({
+      mode: readingMode,
+      topic: effectiveTopic,
+      lens,
+    }),
+  });
+
+  if (
+    effectiveTopic === "relationship" ||
+    q.includes("friend") ||
+    q.includes("family") ||
+    q.includes("boundary") ||
+    q.includes("communication") ||
+    q.includes("between us")
+  ) {
+    return withMode({
+      topic: "Relationship",
+      bagua: ["Dui 兑", "Kun 坤", "Gen 艮"],
+      elements: ["Metal 金", "Earth 土", "Water 水"],
+      ziwei: ["Tian Liang 天梁", "Tai Yin 太阴", "Tian Ji 天机"],
+      focus:
+        "communication, mutual expectation, emotional safety, repair, and boundaries",
+      interpretation:
+        "This reading uses Dui for communication, Kun for care and receptivity, and Gen for boundaries. Tian Liang and Tai Yin-style themes help frame trust, repair, and emotional memory without forcing a fixed relationship outcome.",
+    });
+  }
 
   if (
     effectiveTopic === "love" ||
@@ -255,7 +392,7 @@ function getSymbolicLens({
     q.includes("marry") ||
     q.includes("marriage")
   ) {
-    return {
+    return withMode({
       topic: "Love / Relationship",
       bagua: ["Dui 兑", "Kan 坎", "Li 离"],
       elements: ["Water 水", "Fire 火", "Metal 金"],
@@ -264,7 +401,7 @@ function getSymbolicLens({
         "emotional timing, communication, attraction, uncertainty, and boundaries",
       interpretation:
         "This reading uses Dui for communication and attraction, Kan for emotional uncertainty, and Li for visibility and passion. Tai Yin and Tian Ji-style themes help frame memory, attachment, and repeated thinking without promising a fixed romantic outcome.",
-    };
+    });
   }
 
   if (
@@ -276,7 +413,7 @@ function getSymbolicLens({
     q.includes("startup") ||
     q.includes("promotion")
   ) {
-    return {
+    return withMode({
       topic: "Career",
       bagua: ["Zhen 震", "Gen 艮", "Qian 乾", "Xun 巽"],
       elements: ["Wood 木", "Earth 土", "Metal 金"],
@@ -285,7 +422,7 @@ function getSymbolicLens({
         "movement, preparation, structure, execution, leadership, and timing",
       interpretation:
         "This reading uses Zhen for movement and new beginnings, Gen for pause and preparation, Qian for leadership, and Xun for gradual influence. Wu Qu and Tian Ji-style themes help frame discipline, strategy, and career direction.",
-    };
+    });
   }
 
   if (
@@ -297,7 +434,7 @@ function getSymbolicLens({
     q.includes("invest") ||
     q.includes("profit")
   ) {
-    return {
+    return withMode({
       topic: "Money / Wealth",
       bagua: ["Xun 巽", "Dui 兑", "Kun 坤", "Qian 乾"],
       elements: ["Earth 土", "Metal 金", "Water 水"],
@@ -306,16 +443,15 @@ function getSymbolicLens({
         "resource accumulation, discipline, opportunity flow, value exchange, and risk control",
       interpretation:
         "This reading uses Earth for the ability to hold resources, Metal for discipline and value judgment, and Water for opportunity flow and risk. Wu Qu and Tian Fu-style themes help frame wealth as execution, structure, and accumulation rather than guaranteed fortune.",
-    };
+    });
   }
 
   if (
-    effectiveTopic === "dream" ||
     q.includes("dream") ||
     q.includes("nightmare") ||
     q.includes("sleep")
   ) {
-    return {
+    return withMode({
       topic: "Dream",
       bagua: ["Kan 坎", "Li 离", "Gen 艮"],
       elements: ["Water 水", "Fire 火", "Earth 土"],
@@ -324,7 +460,7 @@ function getSymbolicLens({
         "subconscious emotion, memory, hidden fear, symbolic visibility, and inner boundaries",
       interpretation:
         "This reading uses Kan for the subconscious and emotional depth, Li for images and visibility, and Gen for stillness and boundaries. Tai Yin and Tian Ji-style themes help interpret dreams as emotional symbols, not predictions.",
-    };
+    });
   }
 
   if (
@@ -335,7 +471,7 @@ function getSymbolicLens({
     q.includes("move forward") ||
     q.includes("wait")
   ) {
-    return {
+    return withMode({
       topic: "Decision",
       bagua: ["Zhen 震", "Gen 艮", "Xun 巽", "Qian 乾"],
       elements: ["Wood 木", "Metal 金", "Earth 土"],
@@ -344,18 +480,18 @@ function getSymbolicLens({
         "action versus stillness, strategy, risk boundary, preparation, and timing",
       interpretation:
         "This reading uses Zhen for the urge to act, Gen for the wisdom of pausing, Xun for gradual movement, and Qian for decisive direction. Tian Ji and Po Jun-style themes help frame change without forcing a single answer.",
-    };
+    });
   }
 
   if (
-    effectiveTopic === "self_growth" ||
+    effectiveTopic === "self" ||
     q.includes("stuck") ||
     q.includes("growth") ||
     q.includes("purpose") ||
     q.includes("lost") ||
     q.includes("anxious")
   ) {
-    return {
+    return withMode({
       topic: "Self-Growth",
       bagua: ["Gen 艮", "Kun 坤", "Kan 坎", "Li 离"],
       elements: ["Earth 土", "Water 水", "Fire 火"],
@@ -364,10 +500,10 @@ function getSymbolicLens({
         "inner stability, emotional safety, self-awareness, repair, and clarity",
       interpretation:
         "This reading uses Gen for stillness, Kun for support and grounding, Kan for emotional depth, and Li for clarity. Tai Yin and Tian Liang-style themes help frame emotional repair, maturity, and self-understanding.",
-    };
+    });
   }
 
-  return {
+  return withMode({
     topic: "General",
     bagua: ["Qian 乾", "Kun 坤", "Kan 坎"],
     elements: ["Yin-Yang 阴阳", "Earth 土", "Water 水"],
@@ -376,7 +512,7 @@ function getSymbolicLens({
       "balance, timing, self-cultivation, stability, uncertainty, and grounded action",
     interpretation:
       "This reading uses Qian and Kun to frame active and receptive forces, Kan to represent uncertainty, and Earth-Water themes to balance grounding with flow. Zi Wei and Tian Fu-style themes help frame life direction and resource awareness.",
-  };
+  });
 }
 
 function formatProfile(profile?: SoulLoopProfile | null) {
@@ -396,31 +532,60 @@ Preferred language: ${normalizeLabel(profile.preferredLanguage)}
 `;
 }
 
+function formatRecentHistory(messages: RecentMessageRow[]) {
+  if (!messages.length) {
+    return "No previous SoulLoop questions were found for this user.";
+  }
+
+  return messages
+    .map((message, index) => {
+      const topic = normalizeLabel(message.topic || "general");
+      const question = (message.question || "").replace(/\s+/g, " ").trim();
+      return `${index + 1}. ${topic}: ${question || "Untitled question"}`;
+    })
+    .join("\n");
+}
+
 function buildPrompt({
   topic,
+  readingMode,
   question,
   language,
   tone,
   depth,
   profile,
   lens,
+  recentHistory,
 }: {
   topic: string;
+  readingMode: ReadingModeId;
   question: string;
   language: string;
   tone: string;
   depth: string;
   profile: SoulLoopProfile;
   lens: SymbolicLens;
+  recentHistory: RecentMessageRow[];
 }) {
   const lang = detectLanguage(question, language);
   const topicInstruction = getTopicInstruction(topic);
   const toneInstruction = getToneInstruction(tone);
   const depthInstruction = getDepthInstruction(depth);
+  const normalizedTopic = normalizeReadingTopic(topic);
+  const normalizedMode = normalizeReadingMode(readingMode);
+  const mode = getReadingMode(normalizedMode);
+  const modeInstruction = getModeInstruction(normalizedMode, normalizedTopic);
   const profileContext = formatProfile(profile);
+  const historyContext = formatRecentHistory(recentHistory);
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
   return `
-You are SoulLoop, an AI symbolic reflection guide inspired by Eastern wisdom, Bagua symbolism, I Ching-style thinking, Yin-Yang balance, Five Elements, Zi Wei Dou Shu-style life-theme reflection, and practical self-discovery.
+You are SoulLoop, an AI symbolic self-discovery guide. The product model is inspired by Co-Star's daily personalized language: concise, emotionally intelligent, relationship-aware, repeatable, and highly personal. SoulLoop blends Eastern wisdom with optional paid reading packs such as Tarot, Color Personality, and Daily Loop.
 
 USER QUESTION:
 ${question}
@@ -428,8 +593,14 @@ ${question}
 USER PROFILE PROVIDED BY THE USER:
 ${profileContext}
 
+RECENT USER HISTORY:
+${historyContext}
+
+TODAY'S DATE CONTEXT:
+${today}
+
 IMPORTANT PROFILE USAGE INSTRUCTION:
-You must use the user's provided profile as soft context when shaping the reading.
+You must use the user's provided profile and recent question history as soft context when shaping the reading.
 
 The user's profile fields mean:
 - Birth date: use as symbolic timing context and life-stage reference.
@@ -445,6 +616,7 @@ Do not ignore the profile.
 Do not overstate the profile.
 Do not say you calculated a real BaZi chart, Zi Wei chart, astrology chart, or birth chart from these details.
 Do not claim the user's birth data proves anything.
+Do not infer or mention zodiac signs, sun signs, moon signs, ascendants, star signs, or astrology placements from the birth date or birth time. SoulLoop does not currently have an Astrology mode.
 Use phrases like:
 - "Given the context you shared..."
 - "With your current focus in mind..."
@@ -455,16 +627,25 @@ Use phrases like:
 USER SELECTED TOPIC:
 ${topic}
 
+USER SELECTED READING MODE:
+${mode.label} (${mode.status}, ${mode.creditCost} credits)
+
 SOULLOOP SYMBOLIC LENS:
 Topic: ${lens.topic}
+Reading Mode: ${lens.modeLabel}
 Bagua Lens: ${lens.bagua.join(", ")}
 Five Elements: ${lens.elements.join(", ")}
 Zi Wei Themes: ${lens.ziwei.join(", ")}
+Mode Markers: ${lens.modeMarkers.join(", ")}
+Cross-Validation Inputs: ${lens.crossValidation.join(" | ")}
 Reading Focus: ${lens.focus}
 Lens Interpretation: ${lens.interpretation}
 
 TOPIC-SPECIFIC GUIDANCE:
 ${topicInstruction}
+
+MODE-SPECIFIC GUIDANCE:
+${modeInstruction}
 
 LANGUAGE RULE:
 ${lang.languageInstruction}
@@ -502,10 +683,12 @@ You are not actually calculating a chart, casting a hexagram, generating a BaZi 
 These frameworks are used only as symbolic lenses to help the user reflect.
 
 PERSONALIZATION RULE:
-Use the user profile only to personalize the tone, context, and relevance of the reading.
+Use the user profile and recent history only to personalize the tone, context, and relevance of the reading.
 Do not claim that you have calculated a real chart from the user's birth date, birth time, or birth place.
 Do not make deterministic claims based on birth information, gender, relationship status, or career status.
+Do not infer zodiac signs, Western astrology signs, Chinese zodiac signs, or astrology placements from profile data.
 If profile fields are present, weave the most relevant ones naturally into the reading.
+If recent history is present, reference recurring themes softly, without revealing private history in a way that feels invasive.
 When using profile information, phrase it softly, such as:
 - "Given the context you shared..."
 - "With your current focus in mind..."
@@ -521,6 +704,7 @@ Respond to the user's question as a symbolic reflection, not as a factual predic
 You should help the user think more clearly, feel emotionally grounded, and identify practical next steps.
 Use the SoulLoop Symbolic Lens as the primary professional interpretation structure for the answer.
 Use the user's profile as personalization context throughout the answer.
+Make the answer feel specific enough that the user understands why this answer belongs to this question, this profile, this topic, this mode, and this moment.
 
 IMPORTANT SAFETY RULES:
 - Do not claim certainty.
@@ -557,32 +741,40 @@ STYLE RULES:
 - If the user asks about love, focus on relationship patterns, communication, emotional timing, boundaries, and self-respect.
 - If the user asks about dreams, explain them as emotional symbols, not predictions.
 - If the user asks a yes/no future question, do not answer yes or no directly. Give a balanced reflection.
+- The first sentence must be direct, clear, and useful. Do not start with a long disclaimer.
+- Use mode vocabulary visibly: cards for Tarot, color and motivation dimensions for Color Personality, daily reminder/action/avoidance for Daily Loop, and Eastern wisdom symbols for Eastern Wisdom.
+- For paid modes, always cross-check the paid mode against the Eastern Wisdom baseline so the user feels the pack improved the answer quality.
 
 OUTPUT FORMAT:
-# ${lang.headings.energy}
-Write 1-2 short sentences using an Eastern wisdom tone.
+# ${lang.headings.conclusion}
+Write exactly one concise sentence that gives the user's clearest answer without pretending certainty.
 
-# ${lang.headings.symbolic}
-Explain the situation through the SoulLoop Symbolic Lens.
-Use the provided Bagua Lens, Five Elements, Zi Wei Themes, Reading Focus, and Lens Interpretation.
+# ${lang.headings.why}
+Explain why this is the answer.
+Show the selected mode and its visible markers:
+- Eastern Wisdom: mention Bagua, I Ching-style timing, Five Elements, or Zi Wei-style life theme.
+- Tarot: mention the provided symbolic cards as archetypes, not as physically drawn cards.
+- Color Personality: mention the color pattern and personality dimensions.
+- Daily Loop: mention today's reminder, action, and avoidance.
 Do not claim a real chart, hexagram, or divination was calculated.
 
-# ${lang.headings.profile}
-Use the saved user profile as soft context.
-Mention the most relevant profile details, such as birth date/time as symbolic timing context, current focus, gender, relationship status, career status, and preferred language if relevant.
-Keep this section grounded and non-deterministic.
+# ${lang.headings.resonance}
+Write the "this feels like me" paragraph.
+Combine the user's exact question, saved profile details, recent question history if useful, birthday/time as symbolic context, current focus, relationship/career status, and preference signals.
+Keep this grounded, non-deterministic, and emotionally intelligent.
 
-# ${lang.headings.meaning}
-Directly address the user's question with symbolic reflection and practical clarity.
-
-# ${lang.headings.guidance}
-Give 3 practical bullet points.
+# ${lang.headings.action}
+Give 3 practical bullets for what to do today.
 
 # ${lang.headings.avoid}
-Give 2 bullet points.
+Give 2 bullets for what to avoid today.
 
-# ${lang.headings.reflection}
-Give 1 thoughtful question.
+# ${lang.headings.alternative}
+Give one balanced alternative interpretation that reduces fatalism and helps the user keep agency.
+
+# ${lang.headings.cross}
+Give 2-3 bullets showing how the selected mode and Eastern Wisdom baseline agree or differ.
+Name the common thread clearly.
 
 # ${lang.headings.disclaimer}
 Write one short sentence saying this is for entertainment and self-reflection only.
@@ -633,7 +825,9 @@ export async function POST(request: Request) {
     const question = body.question?.trim();
     const tone = body.tone || "premium-balanced";
     const depth = body.depth || "standard";
-    const creditsUsed = STANDARD_READING_COST;
+    const readingMode = normalizeReadingMode(body.readingMode);
+    const modeConfig = getReadingMode(readingMode);
+    const creditsUsed = modeConfig.creditCost || STANDARD_READING_COST;
 
     if (!question) {
       return NextResponse.json(
@@ -696,14 +890,62 @@ export async function POST(request: Request) {
       );
     }
 
-    const topic = body.topic || profile.currentFocus || "general";
+    const topic = normalizeReadingTopic(body.topic || profile.currentFocus);
     const language = body.language || profile.preferredLanguage || "same";
+
+    if (readingMode !== "eastern_wisdom") {
+      const { data: entitlement, error: entitlementError } =
+        await supabaseAdmin
+          .from("reading_mode_entitlements")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("mode", readingMode)
+          .eq("status", "active")
+          .maybeSingle();
+
+      if (entitlementError) {
+        return NextResponse.json(
+          {
+            error:
+              "Reading mode entitlements are not ready. Please apply the latest Supabase migration.",
+            code: "READING_MODE_ENTITLEMENTS_UNAVAILABLE",
+            readingMode,
+          },
+          { status: 503 }
+        );
+      }
+
+      if (!entitlement) {
+        return NextResponse.json(
+          {
+            error: `${modeConfig.label} is a paid pack. Unlock it before generating this mode.`,
+            code: "READING_MODE_LOCKED",
+            readingMode,
+            unlockCost: modeConfig.unlockCost,
+            remainingCredits: currentCredits,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const lens = getSymbolicLens({
       topic,
+      readingMode,
       question,
       profile,
     });
+
+    const { data: recentHistory, error: historyError } = await supabaseAdmin
+      .from("messages")
+      .select("topic,question,created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    if (historyError) {
+      console.warn("RECENT_HISTORY_LOAD_WARNING:", historyError);
+    }
 
     const apiKey = process.env.DEEPSEEK_API_KEY;
     const baseUrl = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
@@ -718,12 +960,14 @@ export async function POST(request: Request) {
 
     const prompt = buildPrompt({
       topic,
+      readingMode,
       question,
       language,
       tone,
       depth,
       profile,
       lens,
+      recentHistory: (recentHistory || []) as RecentMessageRow[],
     });
 
     const modelResponse = await fetch(`${baseUrl}/chat/completions`, {
@@ -738,7 +982,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "You are SoulLoop, a safe symbolic reflection assistant. You must follow the user's selected language. Never provide deterministic predictions or professional advice. Never claim that you actually cast a hexagram or calculated a metaphysical chart. You must use the user's provided profile as soft personalization context.",
+              "You are SoulLoop, a safe symbolic reflection assistant. You must follow the user's selected language and selected reading mode. Never provide deterministic predictions or professional advice. Never claim that you actually cast a hexagram, drew physical cards, diagnosed personality, or calculated a metaphysical chart. You must use the user's profile and recent history as soft personalization context.",
           },
           {
             role: "user",
@@ -823,7 +1067,7 @@ export async function POST(request: Request) {
         userId: user.id,
         amount: -creditsUsed,
         type: "usage",
-        reason: "standard_reading",
+        reason: `reading_${readingMode}`,
         messageId: messageRow.id,
       });
 
@@ -848,6 +1092,7 @@ export async function POST(request: Request) {
       lens,
       usage: modelData?.usage || null,
       creditsUsed,
+      readingMode,
       remainingCredits,
       messageId: messageRow.id,
     });

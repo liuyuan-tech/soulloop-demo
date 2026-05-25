@@ -4,6 +4,15 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { supabase } from "@/lib/supabase/client";
+import {
+  getReadingMode,
+  getReadingTopic,
+  normalizeReadingTopic,
+  READING_MODES,
+  READING_TOPICS,
+  type ReadingModeId,
+  type ReadingTopicId,
+} from "@/lib/readings/options";
 
 type SoulLoopProfile = {
   birthDate: string;
@@ -18,9 +27,13 @@ type SoulLoopProfile = {
 
 type SymbolicLens = {
   topic: string;
+  readingMode?: ReadingModeId;
+  modeLabel?: string;
   bagua: string[];
   elements: string[];
   ziwei: string[];
+  modeMarkers?: string[];
+  crossValidation?: string[];
   focus: string;
   interpretation: string;
 };
@@ -37,7 +50,11 @@ type InsufficientCreditsState = {
   message: string;
 };
 
-const STANDARD_READING_COST = 8;
+type EntitlementsResponse = {
+  ownedModes?: ReadingModeId[];
+  error?: string;
+  code?: string;
+};
 
 const loadingSteps: LoadingStep[] = [
   {
@@ -113,7 +130,9 @@ function isProfileComplete(profile: SoulLoopProfile | null) {
 }
 
 export default function ChatPage() {
-  const [topic, setTopic] = useState("general");
+  const [topic, setTopic] = useState<ReadingTopicId>("self");
+  const [readingMode, setReadingMode] =
+    useState<ReadingModeId>("eastern_wisdom");
   const [language, setLanguage] = useState("same");
   const [tone] = useState("premium-balanced");
   const [depth] = useState("standard");
@@ -128,6 +147,10 @@ export default function ChatPage() {
   const [profileChecked, setProfileChecked] = useState(false);
   const [currentLoadingStep, setCurrentLoadingStep] = useState(0);
   const [error, setError] = useState("");
+  const [entitlementNotice, setEntitlementNotice] = useState("");
+  const [ownedModes, setOwnedModes] = useState<ReadingModeId[]>([
+    "eastern_wisdom",
+  ]);
   const [insufficientCredits, setInsufficientCredits] =
     useState<InsufficientCreditsState | null>(null);
 
@@ -182,13 +205,37 @@ export default function ChatPage() {
 
         if (isProfileComplete(mappedProfile)) {
           setProfile(mappedProfile);
-          setTopic(mappedProfile.currentFocus || "general");
+          setTopic(normalizeReadingTopic(mappedProfile.currentFocus));
           setLanguage(mappedProfile.preferredLanguage || "same");
           setCreditsBalance(
             typeof data.credits_balance === "number"
               ? data.credits_balance
               : null
           );
+
+          const entitlementsResponse = await fetch(
+            "/api/reading-modes/entitlements",
+            {
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            }
+          );
+
+          const entitlementsData =
+            (await entitlementsResponse.json().catch(() => ({}))) as
+              | EntitlementsResponse
+              | Record<string, never>;
+
+          if (Array.isArray(entitlementsData.ownedModes)) {
+            setOwnedModes(entitlementsData.ownedModes);
+          }
+
+          if (entitlementsData.code) {
+            setEntitlementNotice(
+              "Paid mode unlocks need the latest Supabase migration before they can be used."
+            );
+          }
         } else {
           setProfile(null);
         }
@@ -223,11 +270,24 @@ export default function ChatPage() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  const selectedTopic = useMemo(() => getReadingTopic(topic), [topic]);
+  const selectedMode = useMemo(() => getReadingMode(readingMode), [readingMode]);
+  const selectedReadingCost = selectedMode.creditCost;
+  const selectedModeOwned =
+    readingMode === "eastern_wisdom" || ownedModes.includes(readingMode);
+
   async function handleAsk() {
     if (!question.trim()) return;
 
     if (!profile || !isProfileComplete(profile)) {
       setAnswer("Please complete your SoulLoop profile before asking.");
+      return;
+    }
+
+    if (!selectedModeOwned) {
+      setEntitlementNotice(
+        `${selectedMode.label} is locked. Unlock it once for ${selectedMode.unlockCost} credits on the Credits page, then each reading in this mode costs ${selectedReadingCost} credits.`
+      );
       return;
     }
 
@@ -259,6 +319,7 @@ export default function ChatPage() {
         },
         body: JSON.stringify({
           topic,
+          readingMode,
           question,
           language,
           tone,
@@ -278,12 +339,30 @@ export default function ChatPage() {
           setCreditsBalance(currentCredits);
           setInsufficientCredits({
             currentCredits,
-            requiredCredits: STANDARD_READING_COST,
+            requiredCredits: selectedReadingCost,
             message:
               data.error ||
-              `Not enough credits. A standard reading costs ${STANDARD_READING_COST} credits.`,
+              `Not enough credits. This ${selectedMode.label} reading costs ${selectedReadingCost} credits.`,
           });
 
+          setAnswer("");
+          return;
+        }
+
+        if (data.code === "READING_MODE_LOCKED") {
+          setEntitlementNotice(
+            data.error ||
+              `${selectedMode.label} is locked. Unlock it on the Credits page.`
+          );
+          setAnswer("");
+          return;
+        }
+
+        if (data.code === "READING_MODE_ENTITLEMENTS_UNAVAILABLE") {
+          setEntitlementNotice(
+            data.error ||
+              "Paid mode unlocks need the latest Supabase migration before they can be used."
+          );
           setAnswer("");
           return;
         }
@@ -306,12 +385,7 @@ export default function ChatPage() {
     }
   }
 
-  const examples = [
-    "Will my ex come back?",
-    "Should I change my job?",
-    "What is my energy this week?",
-    "Why do I feel stuck lately?",
-  ];
+  const examples = selectedTopic.examples;
 
   const progressPercent = useMemo(() => {
     return Math.round(((currentLoadingStep + 1) / loadingSteps.length) * 100);
@@ -319,8 +393,8 @@ export default function ChatPage() {
 
   const readingsLeft = useMemo(() => {
     if (typeof creditsBalance !== "number") return null;
-    return Math.floor(creditsBalance / STANDARD_READING_COST);
-  }, [creditsBalance]);
+    return Math.floor(creditsBalance / selectedReadingCost);
+  }, [creditsBalance, selectedReadingCost]);
 
   if (!profileChecked) {
     return (
@@ -395,8 +469,9 @@ export default function ChatPage() {
             <h1 className="text-5xl font-bold md:text-6xl">Ask SoulLoop</h1>
 
             <p className="mt-4 max-w-2xl text-lg leading-8 text-white/60">
-              Ask your question. SoulLoop will shape the reading with your saved
-              profile and symbolic Eastern wisdom lens.
+              Ask a life question through SoulLoop&apos;s self-discovery modes:
+              Eastern Wisdom by default, or enhanced Tarot, Color Personality,
+              and Daily Loop packs.
             </p>
           </div>
 
@@ -474,7 +549,141 @@ export default function ChatPage() {
         </div>
 
         <div className="mt-10 rounded-[32px] border border-white/10 bg-white/5 p-6">
-          <p className="mb-4 text-lg font-medium text-white/80">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-white/35">
+                Question Theme
+              </p>
+              <h2 className="mt-2 text-2xl font-bold">
+                {selectedTopic.label}
+              </h2>
+            </div>
+
+            <div className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-sm text-white/60">
+              {selectedMode.label} · {selectedReadingCost} credits
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {READING_TOPICS.map((item) => {
+              const active = topic === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setTopic(item.id);
+                    setInsufficientCredits(null);
+                  }}
+                  aria-pressed={active}
+                  className={`min-h-24 rounded-3xl border p-4 text-left transition ${
+                    active
+                      ? "border-white/40 bg-white text-black"
+                      : "border-white/10 bg-black/20 text-white hover:bg-white/10"
+                  }`}
+                >
+                  <span className="text-lg font-semibold">{item.label}</span>
+                  <span
+                    className={`mt-2 block text-sm leading-6 ${
+                      active ? "text-black/60" : "text-white/50"
+                    }`}
+                  >
+                    {item.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 rounded-[28px] border border-white/10 bg-black/20 p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.2em] text-white/35">
+                  Reading Mode
+                </p>
+                <p className="mt-2 text-white/65">
+                  Eastern Wisdom is included. Paid packs add a second symbolic
+                  lens, stronger prompt structure, and a one-time unlock before
+                  per-reading usage starts.
+                </p>
+              </div>
+
+              <Link href="/credits" className="text-sm text-white/60 underline">
+                Manage credits & packs
+              </Link>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {READING_MODES.map((item) => {
+                const active = readingMode === item.id;
+                const owned =
+                  item.id === "eastern_wisdom" || ownedModes.includes(item.id);
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setReadingMode(item.id);
+                      setEntitlementNotice(
+                        owned
+                          ? ""
+                          : `${item.label} is locked. Unlock it once for ${item.unlockCost} credits, then pay ${item.creditCost} credits per reading.`
+                      );
+                      setInsufficientCredits(null);
+                    }}
+                    aria-pressed={active}
+                    className={`min-h-36 rounded-3xl border p-4 text-left transition ${
+                      active
+                        ? "border-emerald-200/50 bg-emerald-200/15 text-white"
+                        : "border-white/10 bg-white/5 text-white hover:bg-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center justify-between gap-3">
+                      <span className="font-semibold">{item.label}</span>
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs ${
+                          owned
+                            ? "bg-white text-black"
+                            : "border border-white/15 text-white/65"
+                        }`}
+                      >
+                        {owned ? "Unlocked" : item.status}
+                      </span>
+                    </span>
+                    <span className="mt-3 block text-sm leading-6 text-white/55">
+                      {item.description}
+                    </span>
+                    {!owned && (
+                      <span className="mt-3 block text-sm text-amber-100">
+                        Unlock once: {item.unlockCost} credits
+                      </span>
+                    )}
+                    <span className="mt-3 block text-sm font-semibold text-white/85">
+                      {item.creditCost} credits per reading
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {entitlementNotice && (
+            <div className="mt-5 rounded-3xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm leading-6 text-amber-50">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>{entitlementNotice}</span>
+                <Link
+                  href="/credits"
+                  className="shrink-0 rounded-full bg-white px-4 py-2 text-center font-semibold text-black"
+                >
+                  Open Credits
+                </Link>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-6 mb-4 text-lg font-medium text-white/80">
             What would you like to ask?
           </p>
 
@@ -506,14 +715,19 @@ export default function ChatPage() {
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               onClick={handleAsk}
-              disabled={loading || !question.trim()}
+              disabled={loading || !question.trim() || !selectedModeOwned}
               className="rounded-full bg-white px-10 py-4 text-lg font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? "Calculating Reading..." : "Generate Reading"}
+              {loading
+                ? "Calculating Reading..."
+                : selectedModeOwned
+                  ? "Generate Reading"
+                  : "Unlock Pack First"}
             </button>
 
             <p className="text-sm text-white/40">
-              Standard reading costs {STANDARD_READING_COST} credits.
+              {selectedMode.label} costs {selectedReadingCost} credits per
+              reading.
             </p>
           </div>
         </div>
@@ -643,11 +857,11 @@ export default function ChatPage() {
               </div>
 
               <div className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-sm text-white/60">
-                Profile + Question Mapping
+                {lens.modeLabel || selectedMode.label}
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
               <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
                 <p className="mb-3 text-sm uppercase tracking-[0.18em] text-white/35">
                   Bagua Lens
@@ -695,6 +909,22 @@ export default function ChatPage() {
                   ))}
                 </div>
               </div>
+
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="mb-3 text-sm uppercase tracking-[0.18em] text-white/35">
+                  Mode Markers
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(lens.modeMarkers || []).map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/75"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-5">
@@ -706,6 +936,24 @@ export default function ChatPage() {
                 {lens.interpretation}
               </p>
             </div>
+
+            {!!lens.crossValidation?.length && (
+              <div className="mt-4 rounded-3xl border border-emerald-200/10 bg-emerald-200/5 p-5">
+                <p className="text-sm uppercase tracking-[0.18em] text-white/35">
+                  Cross-Validation
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  {lens.crossValidation.map((item) => (
+                    <p
+                      key={item}
+                      className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60"
+                    >
+                      {item}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
