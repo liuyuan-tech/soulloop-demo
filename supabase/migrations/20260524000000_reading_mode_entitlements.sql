@@ -38,6 +38,7 @@ begin
 end $$;
 
 grant select on public.reading_mode_entitlements to authenticated;
+grant select, insert, update, delete on public.reading_mode_entitlements to service_role;
 
 create or replace function public.unlock_reading_mode(
   p_user_id uuid,
