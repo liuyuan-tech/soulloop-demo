@@ -58,31 +58,33 @@ type EntitlementsResponse = {
 
 const loadingSteps: LoadingStep[] = [
   {
-    icon: "◐",
+    icon: "子",
     title: "读取个人档案",
     description: "载入你的出生信息、当前关注领域与个人语境。",
   },
   {
-    icon: "☯",
-    title: "校准问题主题",
-    description: "识别你的提问方向，并匹配适合的解读框架。",
+    icon: "辰",
+    title: "校准出生时辰",
+    description: "将生日、时辰与问题放进同一个时间参照里。",
   },
   {
     icon: "☰",
-    title: "推演八卦象征",
-    description: "分析问题中的动静、进退、关系张力与时机感。",
+    title: "排布八卦象意",
+    description: "观察问题里的动静、进退、关系张力与时机感。",
   },
   {
-    icon: "✦",
-    title: "平衡五行脉络",
-    description: "整理木、火、土、金、水之间的象征关系。",
+    icon: "金",
+    title: "比对五行强弱",
+    description: "整理木、火、土、金、水之间的象征平衡。",
   },
   {
-    icon: "✺",
-    title: "生成 SoulLoop 解读",
-    description: "融合个人背景、命理象征与现实建议。",
+    icon: "验",
+    title: "交叉验证结论",
+    description: "把所选玩法、历史语境与今日行动建议合并校验。",
   },
 ];
+
+const loadingStepDelays = [720, 1680, 940, 2160, 1280];
 
 const focusLabels: Record<string, string> = {
   love: "Love / Relationship",
@@ -260,15 +262,16 @@ export default function ChatPage() {
   useEffect(() => {
     if (!loading) return;
 
-    const interval = setInterval(() => {
+    const delay = loadingStepDelays[currentLoadingStep] || 1200;
+    const timeout = window.setTimeout(() => {
       setCurrentLoadingStep((prev) => {
         if (prev >= loadingSteps.length - 1) return prev;
         return prev + 1;
       });
-    }, 1200);
+    }, delay);
 
-    return () => clearInterval(interval);
-  }, [loading]);
+    return () => window.clearTimeout(timeout);
+  }, [currentLoadingStep, loading]);
 
   const selectedTopic = useMemo(() => getReadingTopic(topic), [topic]);
   const selectedMode = useMemo(() => getReadingMode(readingMode), [readingMode]);
@@ -799,10 +802,12 @@ export default function ChatPage() {
                   SoulLoop Reading Engine
                 </div>
 
-                <h2 className="mt-4 text-3xl font-bold">命理解读演算中</h2>
+                <h2 className="mt-4 text-3xl font-bold">
+                  正在进行分段推演
+                </h2>
 
                 <p className="mt-3 max-w-2xl leading-7 text-white/60">
-                  正在融合你的个人档案、问题主题、八卦象征、五行脉络与紫微主题，生成本次解读。
+                  推演节奏会根据阶段自然停顿，避免把八字、八卦与五行分析伪装成机械匀速输出。
                 </p>
               </div>
 

@@ -16,6 +16,12 @@ type SoulLoopProfile = {
   preferredLanguage: string;
 };
 
+type Choice = {
+  value: string;
+  label: string;
+  hint?: string;
+};
+
 const defaultProfile: SoulLoopProfile = {
   birthDate: "",
   birthTime: "",
@@ -27,64 +33,69 @@ const defaultProfile: SoulLoopProfile = {
   preferredLanguage: "same",
 };
 
-const focusLabels: Record<string, string> = {
-  love: "Love / Relationship",
-  career: "Career",
-  money: "Money",
-  daily_energy: "Daily Energy",
-  decision: "Decision",
-  self_growth: "Self-Growth",
-  general: "General",
-};
+const genderChoices: Choice[] = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "non_binary", label: "Non-binary" },
+  { value: "other", label: "Other" },
+];
 
-const relationshipLabels: Record<string, string> = {
-  single: "Single",
-  dating: "Dating",
-  in_relationship: "In a relationship",
-  complicated: "Complicated",
-  married: "Married",
-  separated: "Separated",
-};
+const focusChoices: Choice[] = [
+  { value: "love", label: "Love", hint: "恋爱、吸引、亲密关系" },
+  { value: "career", label: "Career", hint: "方向、机会、工作节奏" },
+  { value: "money", label: "Money", hint: "财富、风险、资源管理" },
+  { value: "decision", label: "Decision", hint: "选择、时机、下一步" },
+  { value: "self_growth", label: "Self", hint: "自我、习惯、内在模式" },
+  { value: "relationship", label: "Relationship", hint: "沟通、边界、修复" },
+];
 
-const careerLabels: Record<string, string> = {
-  student: "Student",
-  employed: "Employed",
-  founder: "Founder / Entrepreneur",
-  freelancer: "Freelancer",
-  job_seeking: "Job seeking",
-  transition: "In transition",
-};
+const relationshipChoices: Choice[] = [
+  { value: "single", label: "Single" },
+  { value: "dating", label: "Dating" },
+  { value: "in_relationship", label: "In relationship" },
+  { value: "complicated", label: "Complicated" },
+  { value: "married", label: "Married" },
+  { value: "separated", label: "Separated" },
+];
 
-const languageLabels: Record<string, string> = {
-  same: "Same as my question",
-  english: "English",
-  chinese: "中文",
-};
+const careerChoices: Choice[] = [
+  { value: "", label: "Prefer not to say" },
+  { value: "student", label: "Student" },
+  { value: "employed", label: "Employed" },
+  { value: "founder", label: "Founder" },
+  { value: "freelancer", label: "Freelancer" },
+  { value: "job_seeking", label: "Job seeking" },
+  { value: "transition", label: "In transition" },
+];
 
-const genderLabels: Record<string, string> = {
-  female: "Female",
-  male: "Male",
-  non_binary: "Non-binary",
-  other: "Other",
-};
+const languageChoices: Choice[] = [
+  { value: "same", label: "Same as question" },
+  { value: "english", label: "English" },
+  { value: "chinese", label: "中文" },
+];
 
-const years = Array.from({ length: 201 }, (_, index) => String(1900 + index));
+const years = Array.from({ length: 151 }, (_, index) => String(1950 + index));
 const months = Array.from({ length: 12 }, (_, index) =>
   String(index + 1).padStart(2, "0")
 );
 const days = Array.from({ length: 31 }, (_, index) =>
   String(index + 1).padStart(2, "0")
 );
+const hours = Array.from({ length: 24 }, (_, index) =>
+  String(index).padStart(2, "0")
+);
+const minutes = ["00", "15", "30", "45"];
+
+const stepTitles = [
+  "Gender",
+  "Birth time",
+  "Birthplace",
+  "Life theme",
+  "Situation",
+  "Language",
+];
 
 function splitBirthDate(birthDate: string) {
-  if (!birthDate) {
-    return {
-      year: "",
-      month: "",
-      day: "",
-    };
-  }
-
   const [year, month, day] = birthDate.split("-");
 
   return {
@@ -94,9 +105,23 @@ function splitBirthDate(birthDate: string) {
   };
 }
 
+function splitBirthTime(birthTime: string) {
+  const [hour, minute] = birthTime.split(":");
+
+  return {
+    hour: hour || "",
+    minute: minute || "",
+  };
+}
+
 function buildBirthDate(year: string, month: string, day: string) {
   if (!year || !month || !day) return "";
   return `${year}-${month}-${day}`;
+}
+
+function buildBirthTime(hour: string, minute: string) {
+  if (!hour || !minute) return "";
+  return `${hour}:${minute}`;
 }
 
 function isValidBirthDate(birthDate: string) {
@@ -121,19 +146,77 @@ function isValidBirthDate(birthDate: string) {
   );
 }
 
+function isProfileComplete(profile: SoulLoopProfile) {
+  return Boolean(
+    profile.birthDate &&
+      isValidBirthDate(profile.birthDate) &&
+      profile.birthTime &&
+      profile.gender &&
+      profile.currentFocus &&
+      profile.relationshipStatus &&
+      profile.preferredLanguage
+  );
+}
+
 function validateProfile(profile: SoulLoopProfile) {
+  if (!profile.gender) return "Please select your gender.";
   if (!profile.birthDate) return "Please select your birth date.";
   if (!isValidBirthDate(profile.birthDate)) {
     return "Please select a valid birth date.";
   }
   if (!profile.birthTime) return "Please enter your birth time.";
-  if (!profile.gender) return "Please select your gender.";
   if (!profile.currentFocus) return "Please choose your current focus.";
   if (!profile.relationshipStatus)
     return "Please select your relationship status.";
   if (!profile.preferredLanguage) return "Please select your preferred language.";
 
   return "";
+}
+
+function choiceLabel(choices: Choice[], value: string, fallback = "Required") {
+  return choices.find((choice) => choice.value === value)?.label || fallback;
+}
+
+function ChoiceGrid({
+  value,
+  choices,
+  onChange,
+}: {
+  value: string;
+  choices: Choice[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {choices.map((choice) => {
+        const active = value === choice.value;
+
+        return (
+          <button
+            key={choice.value || "empty"}
+            type="button"
+            onClick={() => onChange(choice.value)}
+            className={`min-h-20 rounded-2xl border p-4 text-left transition ${
+              active
+                ? "border-[#f8f4ea]/60 bg-[#f8f4ea] text-[#11100d]"
+                : "border-[#f8f4ea]/10 bg-[#0d0e0b] text-[#f8f4ea] hover:bg-[#f8f4ea]/8"
+            }`}
+          >
+            <span className="block text-lg font-semibold">{choice.label}</span>
+            {choice.hint && (
+              <span
+                className={`mt-2 block text-sm ${
+                  active ? "text-[#11100d]/55" : "text-[#f8f4ea]/42"
+                }`}
+              >
+                {choice.hint}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function ProfilePage() {
@@ -143,6 +226,12 @@ export default function ProfilePage() {
   const [birthYear, setBirthYear] = useState("");
   const [birthMonth, setBirthMonth] = useState("");
   const [birthDay, setBirthDay] = useState("");
+  const [birthHour, setBirthHour] = useState("");
+  const [birthMinute, setBirthMinute] = useState("");
+  const [calendarType, setCalendarType] = useState<"solar" | "lunar">("solar");
+  const [birthplaceRegion, setBirthplaceRegion] =
+    useState<"china" | "overseas">("china");
+  const [quickBirthInput, setQuickBirthInput] = useState("");
 
   const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
@@ -152,6 +241,8 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [step, setStep] = useState(0);
 
   useEffect(() => {
     async function loadProfile() {
@@ -178,7 +269,7 @@ export default function ProfilePage() {
         }
 
         setUserId(user.id);
-        setEmail(user.email || "");
+        setEmail(user.email || user.phone || "");
 
         const { data, error } = await supabase
           .from("profiles")
@@ -191,6 +282,7 @@ export default function ProfilePage() {
         if (error) {
           setError(`Profile load error: ${error.message}`);
           setPageLoading(false);
+          setModalOpen(true);
           return;
         }
 
@@ -213,11 +305,19 @@ export default function ProfilePage() {
           setBirthMonth(dateParts.month);
           setBirthDay(dateParts.day);
 
+          const timeParts = splitBirthTime(loadedProfile.birthTime);
+          setBirthHour(timeParts.hour);
+          setBirthMinute(timeParts.minute);
+
           setCreditsBalance(
             typeof data.credits_balance === "number"
               ? data.credits_balance
               : null
           );
+
+          setModalOpen(!isProfileComplete(loadedProfile));
+        } else {
+          setModalOpen(true);
         }
 
         setPageLoading(false);
@@ -231,6 +331,7 @@ export default function ProfilePage() {
         );
 
         setPageLoading(false);
+        setModalOpen(true);
       }
     }
 
@@ -239,9 +340,9 @@ export default function ProfilePage() {
 
   const completionItems = useMemo(
     () => [
+      Boolean(profile.gender),
       Boolean(profile.birthDate && isValidBirthDate(profile.birthDate)),
       Boolean(profile.birthTime),
-      Boolean(profile.gender),
       Boolean(profile.currentFocus),
       Boolean(profile.relationshipStatus),
       Boolean(profile.preferredLanguage),
@@ -253,6 +354,22 @@ export default function ProfilePage() {
     const completed = completionItems.filter(Boolean).length;
     return Math.round((completed / completionItems.length) * 100);
   }, [completionItems]);
+
+  const stepReady = useMemo(() => {
+    if (step === 0) return Boolean(profile.gender);
+    if (step === 1) {
+      return Boolean(
+        profile.birthDate &&
+          isValidBirthDate(profile.birthDate) &&
+          profile.birthTime
+      );
+    }
+    if (step === 2) return true;
+    if (step === 3) return Boolean(profile.currentFocus);
+    if (step === 4) return Boolean(profile.relationshipStatus);
+    if (step === 5) return Boolean(profile.preferredLanguage);
+    return false;
+  }, [profile, step]);
 
   function updateProfile(field: keyof SoulLoopProfile, value: string) {
     setProfile((prev) => ({
@@ -281,6 +398,58 @@ export default function ProfilePage() {
 
     setSaved(false);
     setError("");
+  }
+
+  function updateBirthTime(part: "hour" | "minute", value: string) {
+    const nextHour = part === "hour" ? value : birthHour;
+    const nextMinute = part === "minute" ? value : birthMinute;
+
+    setBirthHour(nextHour);
+    setBirthMinute(nextMinute);
+
+    const nextBirthTime = buildBirthTime(nextHour, nextMinute);
+
+    setProfile((prev) => ({
+      ...prev,
+      birthTime: nextBirthTime,
+    }));
+
+    setSaved(false);
+    setError("");
+  }
+
+  function applyQuickBirthInput() {
+    const normalized = quickBirthInput.replace(/\D/g, "");
+
+    if (normalized.length !== 12) {
+      setError("Quick input format should be YYYYMMDDHHMM, e.g. 199306241200.");
+      return;
+    }
+
+    const nextYear = normalized.slice(0, 4);
+    const nextMonth = normalized.slice(4, 6);
+    const nextDay = normalized.slice(6, 8);
+    const nextHour = normalized.slice(8, 10);
+    const nextMinute = normalized.slice(10, 12);
+    const nextBirthDate = buildBirthDate(nextYear, nextMonth, nextDay);
+
+    if (!isValidBirthDate(nextBirthDate)) {
+      setError("Quick input contains an invalid date.");
+      return;
+    }
+
+    setBirthYear(nextYear);
+    setBirthMonth(nextMonth);
+    setBirthDay(nextDay);
+    setBirthHour(nextHour);
+    setBirthMinute(nextMinute);
+    setProfile((prev) => ({
+      ...prev,
+      birthDate: nextBirthDate,
+      birthTime: buildBirthTime(nextHour, nextMinute),
+    }));
+    setError("");
+    setSaved(false);
   }
 
   async function saveProfile() {
@@ -321,6 +490,7 @@ export default function ProfilePage() {
       }
 
       setSaved(true);
+      setModalOpen(false);
 
       setTimeout(() => {
         router.push("/chat");
@@ -343,12 +513,278 @@ export default function ProfilePage() {
     router.push("/login");
   }
 
+  function renderStep() {
+    if (step === 0) {
+      return (
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+            Step 1
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold">Choose your gender</h2>
+          <p className="mt-3 text-sm leading-6 text-[#f8f4ea]/50">
+            Used only for more natural wording. It does not determine your
+            result.
+          </p>
+          <div className="mt-6">
+            <ChoiceGrid
+              value={profile.gender}
+              choices={genderChoices}
+              onChange={(value) => updateProfile("gender", value)}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (step === 1) {
+      return (
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+            Step 2
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold">Set birth time</h2>
+
+          <div className="mt-6 flex w-full rounded-full bg-[#2a2926] p-1">
+            {[
+              ["solar", "Solar"],
+              ["lunar", "Lunar"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setCalendarType(value as "solar" | "lunar")}
+                className={`flex-1 rounded-full px-4 py-3 font-semibold ${
+                  calendarType === value
+                    ? "bg-[#f8f4ea] text-[#11100d]"
+                    : "text-[#f8f4ea]/48"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
+            <input
+              value={quickBirthInput}
+              onChange={(event) => {
+                setQuickBirthInput(event.target.value);
+                setError("");
+              }}
+              placeholder="Quick input: 199306241200"
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none placeholder:text-[#f8f4ea]/32"
+            />
+            <button
+              type="button"
+              onClick={applyQuickBirthInput}
+              className="rounded-full border border-[#f8f4ea]/18 px-5 py-3 font-semibold text-[#f8f4ea]"
+            >
+              Apply
+            </button>
+          </div>
+
+          <div className="mt-5 grid grid-cols-5 gap-3">
+            <select
+              value={birthYear}
+              onChange={(event) => updateBirthDate("year", event.target.value)}
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none"
+            >
+              <option value="">Year</option>
+              {years.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={birthMonth}
+              onChange={(event) => updateBirthDate("month", event.target.value)}
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none"
+            >
+              <option value="">MM</option>
+              {months.map((month) => (
+                <option key={month} value={month}>
+                  {month}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={birthDay}
+              onChange={(event) => updateBirthDate("day", event.target.value)}
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none"
+            >
+              <option value="">DD</option>
+              {days.map((day) => (
+                <option key={day} value={day}>
+                  {day}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={birthHour}
+              onChange={(event) => updateBirthTime("hour", event.target.value)}
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none"
+            >
+              <option value="">HH</option>
+              {hours.map((hour) => (
+                <option key={hour} value={hour}>
+                  {hour}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={birthMinute}
+              onChange={(event) => updateBirthTime("minute", event.target.value)}
+              className="rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-[#f8f4ea] outline-none"
+            >
+              <option value="">MM</option>
+              {minutes.map((minute) => (
+                <option key={minute} value={minute}>
+                  {minute}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <p className="mt-4 rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-center text-lg font-semibold">
+            {profile.birthDate || "YYYY-MM-DD"} {profile.birthTime || "HH:MM"}
+          </p>
+        </div>
+      );
+    }
+
+    if (step === 2) {
+      return (
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+            Step 3
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold">Add birthplace</h2>
+          <p className="mt-3 text-sm leading-6 text-[#f8f4ea]/50">
+            Optional, but useful when users expect a more grounded reading.
+          </p>
+
+          <div className="mt-6 flex rounded-full bg-[#2a2926] p-1">
+            {[
+              ["china", "China"],
+              ["overseas", "Overseas"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() =>
+                  setBirthplaceRegion(value as "china" | "overseas")
+                }
+                className={`flex-1 rounded-full px-4 py-3 font-semibold ${
+                  birthplaceRegion === value
+                    ? "bg-[#f8f4ea] text-[#11100d]"
+                    : "text-[#f8f4ea]/48"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <input
+            value={profile.birthPlace}
+            onChange={(event) => updateProfile("birthPlace", event.target.value)}
+            placeholder={
+              birthplaceRegion === "china"
+                ? "上海市 上海"
+                : "San Francisco, CA"
+            }
+            className="mt-5 w-full rounded-2xl border border-[#f8f4ea]/10 bg-[#0d0e0b] p-4 text-center text-lg font-semibold text-[#f8f4ea] outline-none placeholder:text-[#f8f4ea]/35"
+          />
+        </div>
+      );
+    }
+
+    if (step === 3) {
+      return (
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+            Step 4
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold">What is the theme?</h2>
+          <p className="mt-3 text-sm leading-6 text-[#f8f4ea]/50">
+            This becomes the default lens when you enter SoulLoop.
+          </p>
+          <div className="mt-6">
+            <ChoiceGrid
+              value={profile.currentFocus}
+              choices={focusChoices}
+              onChange={(value) => updateProfile("currentFocus", value)}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (step === 4) {
+      return (
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+            Step 5
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold">Current situation</h2>
+          <div className="mt-6">
+            <p className="mb-3 text-sm text-[#f8f4ea]/50">
+              Relationship status
+            </p>
+            <ChoiceGrid
+              value={profile.relationshipStatus}
+              choices={relationshipChoices}
+              onChange={(value) => updateProfile("relationshipStatus", value)}
+            />
+          </div>
+
+          <div className="mt-6">
+            <p className="mb-3 text-sm text-[#f8f4ea]/50">
+              Career status optional
+            </p>
+            <ChoiceGrid
+              value={profile.careerStatus}
+              choices={careerChoices}
+              onChange={(value) => updateProfile("careerStatus", value)}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <p className="text-sm uppercase tracking-[0.18em] text-[#f1d691]">
+          Step 6
+        </p>
+        <h2 className="mt-3 text-3xl font-semibold">Preferred language</h2>
+        <p className="mt-3 text-sm leading-6 text-[#f8f4ea]/50">
+          This controls the default answer language.
+        </p>
+        <div className="mt-6">
+          <ChoiceGrid
+            value={profile.preferredLanguage}
+            choices={languageChoices}
+            onChange={(value) => updateProfile("preferredLanguage", value)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (pageLoading) {
     return (
-      <main className="min-h-screen bg-[#101020] px-6 py-16 text-white">
+      <main className="min-h-screen bg-[#090b0a] px-6 py-16 text-[#f8f4ea]">
         <section className="mx-auto max-w-3xl">
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8">
-            <p className="text-white/60">Loading your SoulLoop profile...</p>
+          <div className="rounded-lg border border-[#f8f4ea]/10 bg-[#f8f4ea]/5 p-8">
+            <p className="text-[#f8f4ea]/60">
+              Loading your SoulLoop profile...
+            </p>
           </div>
         </section>
       </main>
@@ -356,397 +792,209 @@ export default function ProfilePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#101020] px-6 py-12 text-white">
+    <main className="min-h-screen bg-[#090b0a] px-6 py-10 text-[#f8f4ea]">
       <section className="mx-auto max-w-6xl">
         <div className="flex items-center justify-between gap-4">
-          <Link href="/" className="text-sm text-white/50">
+          <Link href="/" className="text-sm text-[#f8f4ea]/50">
             ← Back to Home
           </Link>
 
           <button
+            type="button"
             onClick={handleLogout}
-            className="text-sm text-white/50 underline"
+            className="text-sm text-[#f8f4ea]/50 underline"
           >
             Log out
           </button>
         </div>
 
-        <div className="mt-10 grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_380px]">
           <div>
-            <p className="mb-4 inline-block rounded-full border border-white/20 px-4 py-2 text-sm text-white/70">
+            <p className="mb-4 inline-flex rounded-full border border-[#c9a64d]/35 bg-[#c9a64d]/10 px-4 py-2 text-sm text-[#f1d691]">
               SoulLoop Profile
             </p>
 
-            <h1 className="max-w-3xl text-5xl font-bold leading-tight md:text-6xl">
-              Complete your symbolic profile
+            <h1 className="max-w-3xl text-5xl font-semibold leading-tight md:text-6xl">
+              Create a clean symbolic profile.
             </h1>
 
-            <p className="mt-5 max-w-2xl text-lg leading-8 text-white/65">
-              SoulLoop uses your required profile fields to personalize your
-              symbolic reading. Your account stores your profile, credits, and
-              reading history across devices.
+            <p className="mt-5 max-w-2xl text-lg leading-8 text-[#f8f4ea]/60">
+              Each field is collected in a focused modal step so the experience
+              feels calm, premium, and fast.
             </p>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-                <p className="text-white/35">Signed in as</p>
-                <p className="mt-1 break-all text-white">{email}</p>
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <div className="rounded-lg border border-[#f8f4ea]/10 bg-[#f8f4ea]/5 p-5">
+                <p className="text-sm text-[#f8f4ea]/40">Signed in as</p>
+                <p className="mt-2 break-all font-semibold">{email || "—"}</p>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-                <p className="text-white/35">Credits Balance</p>
-                <p className="mt-1 text-2xl font-semibold text-white">
+              <div className="rounded-lg border border-[#f8f4ea]/10 bg-[#f8f4ea]/5 p-5">
+                <p className="text-sm text-[#f8f4ea]/40">Credits</p>
+                <p className="mt-2 text-3xl font-semibold">
                   {creditsBalance === null ? "—" : creditsBalance}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#f8f4ea]/10 bg-[#f8f4ea]/5 p-5">
+                <p className="text-sm text-[#f8f4ea]/40">Readiness</p>
+                <p className="mt-2 text-3xl font-semibold">
+                  {completionPercent}%
                 </p>
               </div>
             </div>
 
-            <div className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-6">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm uppercase tracking-[0.2em] text-white/35">
-                    Profile Completion
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {completionPercent}% ready
-                  </p>
-                </div>
-
-                <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-black/20 text-lg font-bold">
-                  {completionPercent}%
-                </div>
-              </div>
-
-              <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="mt-8 max-w-3xl">
+              <div className="h-2 overflow-hidden rounded-full bg-[#f8f4ea]/10">
                 <div
-                  className="h-full rounded-full bg-white transition-all duration-500"
+                  className="h-full rounded-full bg-[#f1d691] transition-all duration-500"
                   style={{ width: `${completionPercent}%` }}
                 />
               </div>
-
-              <p className="mt-4 text-sm leading-6 text-white/50">
-                Required fields: Birth Date, Birth Time, Gender, Current Focus,
-                Relationship Status, and Preferred Language.
-              </p>
             </div>
 
-            <div className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-6">
-              <p className="text-sm uppercase tracking-[0.2em] text-white/35">
-                How SoulLoop uses your profile
-              </p>
+            <div className="mt-8 flex flex-col gap-4 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                className="rounded-full bg-[#f8f4ea] px-8 py-4 font-semibold text-[#11100d]"
+              >
+                {completionPercent === 100 ? "Edit Profile" : "Create Profile"}
+              </button>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                {[
-                  [
-                    "Birth date & time",
-                    "Used as symbolic timing context for rhythm, life phase, and personal reference.",
-                  ],
-                  [
-                    "Gender",
-                    "Used only to personalize wording and context. SoulLoop does not make deterministic claims from gender.",
-                  ],
-                  [
-                    "Current focus",
-                    "Used to select the main reading lens, such as love, career, money, decision-making, or self-growth.",
-                  ],
-                  [
-                    "Relationship status",
-                    "Used to make emotional and practical guidance more grounded in your current situation.",
-                  ],
-                  [
-                    "Preferred language",
-                    "Used to decide whether SoulLoop replies in English, Chinese, or the same language as your question.",
-                  ],
-                  [
-                    "Birth place / career status",
-                    "Optional fields that can make your reading feel more contextual, but they are not required.",
-                  ],
-                ].map(([title, text]) => (
-                  <div
-                    key={title}
-                    className="rounded-3xl border border-white/10 bg-black/20 p-5"
-                  >
-                    <h3 className="text-lg font-semibold">{title}</h3>
-                    <p className="mt-3 text-sm leading-7 text-white/55">
-                      {text}
-                    </p>
-                  </div>
-                ))}
-              </div>
+              <Link
+                href="/chat"
+                className="rounded-full border border-[#f8f4ea]/18 px-8 py-4 text-center font-semibold text-[#f8f4ea]"
+              >
+                Enter SoulLoop
+              </Link>
             </div>
           </div>
 
-          <div className="rounded-[32px] border border-white/10 bg-white/5 p-6">
-            <div className="grid gap-5">
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Birth Date required
-                </label>
+          <aside className="rounded-lg border border-[#f8f4ea]/10 bg-[#f8f4ea]/6 p-6">
+            <p className="text-sm uppercase tracking-[0.18em] text-[#f8f4ea]/35">
+              Profile Preview
+            </p>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <select
-                    value={birthYear}
-                    onChange={(e) => updateBirthDate("year", e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                  >
-                    <option value="">Year</option>
-                    {years.map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={birthMonth}
-                    onChange={(e) => updateBirthDate("month", e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                  >
-                    <option value="">Month</option>
-                    {months.map((month) => (
-                      <option key={month} value={month}>
-                        {month}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={birthDay}
-                    onChange={(e) => updateBirthDate("day", e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                  >
-                    <option value="">Day</option>
-                    {days.map((day) => (
-                      <option key={day} value={day}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+            <div className="mt-5 grid gap-4 text-sm">
+              {[
+                ["Gender", choiceLabel(genderChoices, profile.gender)],
+                [
+                  "Birth",
+                  profile.birthDate || profile.birthTime
+                    ? `${profile.birthDate || "Date"} ${profile.birthTime || "Time"}`
+                    : "Required",
+                ],
+                ["Birthplace", profile.birthPlace || "Optional"],
+                ["Theme", choiceLabel(focusChoices, profile.currentFocus)],
+                [
+                  "Relationship",
+                  choiceLabel(relationshipChoices, profile.relationshipStatus),
+                ],
+                [
+                  "Career",
+                  choiceLabel(careerChoices, profile.careerStatus, "Optional"),
+                ],
+                [
+                  "Language",
+                  choiceLabel(languageChoices, profile.preferredLanguage),
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="flex justify-between gap-4 border-b border-[#f8f4ea]/8 pb-3 last:border-b-0"
+                >
+                  <span className="text-[#f8f4ea]/42">{label}</span>
+                  <span className="text-right font-medium">{value}</span>
                 </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </section>
 
-                {profile.birthDate && !isValidBirthDate(profile.birthDate) && (
-                  <p className="mt-3 text-sm text-red-200">
-                    Please select a valid calendar date.
-                  </p>
-                )}
-              </div>
-
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/72 px-4 py-6 backdrop-blur-md">
+          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[32px] border border-[#f8f4ea]/12 bg-[#1a1a18] p-6 shadow-[0_28px_120px_rgba(0,0,0,0.58)] md:p-9">
+            <div className="mb-8 flex items-center justify-between gap-4">
               <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Birth Time required
-                </label>
-                <input
-                  type="time"
-                  value={profile.birthTime}
-                  onChange={(e) => updateProfile("birthTime", e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                />
+                <h1 className="text-4xl font-semibold">Create profile</h1>
+                <p className="mt-2 text-sm text-[#f8f4ea]/45">
+                  {stepTitles[step]} · {step + 1} of {stepTitles.length}
+                </p>
               </div>
 
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Birth Place optional
-                </label>
-                <input
-                  type="text"
-                  value={profile.birthPlace}
-                  onChange={(e) => updateProfile("birthPlace", e.target.value)}
-                  placeholder="e.g. Shanghai, Tokyo, San Francisco"
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none placeholder:text-white/30"
-                />
-              </div>
-
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Gender required
-                </label>
-                <select
-                  value={profile.gender}
-                  onChange={(e) => updateProfile("gender", e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                >
-                  <option value="">Select gender</option>
-                  <option value="female">Female</option>
-                  <option value="male">Male</option>
-                  <option value="non_binary">Non-binary</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Current Focus required
-                </label>
-                <select
-                  value={profile.currentFocus}
-                  onChange={(e) =>
-                    updateProfile("currentFocus", e.target.value)
-                  }
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                >
-                  <option value="love">Love / Relationship</option>
-                  <option value="career">Career</option>
-                  <option value="money">Money</option>
-                  <option value="daily_energy">Daily Energy</option>
-                  <option value="decision">Decision</option>
-                  <option value="self_growth">Self-Growth</option>
-                  <option value="general">General</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Relationship Status required
-                </label>
-                <select
-                  value={profile.relationshipStatus}
-                  onChange={(e) =>
-                    updateProfile("relationshipStatus", e.target.value)
-                  }
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                >
-                  <option value="">Select relationship status</option>
-                  <option value="single">Single</option>
-                  <option value="dating">Dating</option>
-                  <option value="in_relationship">In a relationship</option>
-                  <option value="complicated">Complicated</option>
-                  <option value="married">Married</option>
-                  <option value="separated">Separated</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Career Status optional
-                </label>
-                <select
-                  value={profile.careerStatus}
-                  onChange={(e) => updateProfile("careerStatus", e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                >
-                  <option value="">Prefer not to say</option>
-                  <option value="student">Student</option>
-                  <option value="employed">Employed</option>
-                  <option value="founder">Founder / Entrepreneur</option>
-                  <option value="freelancer">Freelancer</option>
-                  <option value="job_seeking">Job seeking</option>
-                  <option value="transition">In transition</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-3 block text-sm font-medium text-white/70">
-                  Preferred Language required
-                </label>
-                <select
-                  value={profile.preferredLanguage}
-                  onChange={(e) =>
-                    updateProfile("preferredLanguage", e.target.value)
-                  }
-                  className="w-full rounded-2xl border border-white/10 bg-[#111122] p-4 text-white outline-none"
-                >
-                  <option value="same">Same as my question</option>
-                  <option value="english">English</option>
-                  <option value="chinese">中文</option>
-                </select>
-              </div>
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#f8f4ea]/12 text-2xl text-[#f8f4ea]/55"
+                aria-label="Close profile modal"
+              >
+                ×
+              </button>
             </div>
 
-            <div className="mt-7 rounded-[28px] border border-white/10 bg-black/20 p-5">
-              <p className="text-sm uppercase tracking-[0.2em] text-white/35">
-                Profile Preview
-              </p>
-
-              <div className="mt-4 grid gap-3 text-sm text-white/65">
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Birth Date</span>
-                  <span>{profile.birthDate || "Required"}</span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Birth Time</span>
-                  <span>{profile.birthTime || "Required"}</span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Birth Place</span>
-                  <span>{profile.birthPlace || "Optional"}</span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Gender</span>
-                  <span>{genderLabels[profile.gender] || "Required"}</span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Focus</span>
-                  <span>
-                    {focusLabels[profile.currentFocus] || profile.currentFocus}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Relationship</span>
-                  <span>
-                    {profile.relationshipStatus
-                      ? relationshipLabels[profile.relationshipStatus] ||
-                        profile.relationshipStatus
-                      : "Required"}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Career</span>
-                  <span>
-                    {profile.careerStatus
-                      ? careerLabels[profile.careerStatus] ||
-                        profile.careerStatus
-                      : "Optional"}
-                  </span>
-                </div>
-
-                <div className="flex justify-between gap-4">
-                  <span className="text-white/40">Language</span>
-                  <span>
-                    {languageLabels[profile.preferredLanguage] ||
-                      profile.preferredLanguage ||
-                      "Required"}
-                  </span>
-                </div>
-              </div>
+            <div className="mb-7 grid grid-cols-6 gap-2">
+              {stepTitles.map((title, index) => (
+                <button
+                  key={title}
+                  type="button"
+                  onClick={() => setStep(index)}
+                  aria-label={`Go to ${title}`}
+                  className={`h-2 rounded-full ${
+                    index <= step ? "bg-[#f1d691]" : "bg-[#f8f4ea]/12"
+                  }`}
+                />
+              ))}
             </div>
+
+            <div className="min-h-[360px]">{renderStep()}</div>
 
             {error && (
-              <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200">
+              <div className="mt-6 rounded-2xl border border-red-300/20 bg-red-300/10 p-4 text-sm leading-6 text-red-100">
                 {error}
               </div>
             )}
 
             {saved && (
-              <div className="mt-5 rounded-2xl border border-green-400/20 bg-green-400/10 p-4 text-sm text-green-200">
+              <div className="mt-6 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-sm leading-6 text-emerald-100">
                 Profile saved. Entering SoulLoop...
               </div>
             )}
 
-            <div className="mt-7 flex flex-col gap-4">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
               <button
-                onClick={saveProfile}
-                disabled={saving}
-                className="rounded-full bg-white px-8 py-4 font-semibold text-black disabled:opacity-50"
+                type="button"
+                onClick={() => setStep((value) => Math.max(value - 1, 0))}
+                disabled={step === 0 || saving}
+                className="rounded-full border border-[#f8f4ea]/12 px-8 py-4 font-semibold text-[#f8f4ea] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {saving ? "Saving..." : "Save & Enter SoulLoop"}
+                Back
               </button>
 
-              <Link
-                href="/"
-                className="rounded-full border border-white/20 px-8 py-4 text-center font-semibold text-white"
-              >
-                Back to Home
-              </Link>
+              {step < stepTitles.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setStep((value) => Math.min(value + 1, 5))}
+                  disabled={!stepReady || saving}
+                  className="rounded-full bg-[#f8f4ea] px-8 py-4 font-semibold text-[#11100d] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Continue
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={saveProfile}
+                  disabled={saving || !isProfileComplete(profile)}
+                  className="rounded-full bg-[#f8f4ea] px-8 py-4 font-semibold text-[#11100d] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Confirm"}
+                </button>
+              )}
             </div>
           </div>
         </div>
-      </section>
+      )}
     </main>
   );
 }
