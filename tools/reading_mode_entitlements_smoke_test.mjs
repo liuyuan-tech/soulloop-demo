@@ -193,15 +193,22 @@ async function checkSchema(admin) {
     p_credits_cost: 80,
   });
 
-  if (
-    !rpcCheck.error ||
-    !String(rpcCheck.error.message || "")
-      .toLowerCase()
-      .includes("profile not found")
-  ) {
+  const rpcCheckValue = Array.isArray(rpcCheck.data)
+    ? rpcCheck.data[0]
+    : rpcCheck.data;
+
+  if (rpcCheck.error) {
+    const message = String(rpcCheck.error.message || "").toLowerCase();
+
+    if (!message.includes("profile not found")) {
+      schemaErrors.push(
+        `unlock_reading_mode RPC check failed unexpectedly: ${rpcCheck.error.message}`
+      );
+    }
+  } else if (rpcCheckValue?.code !== "PROFILE_NOT_FOUND") {
     schemaErrors.push(
       `unlock_reading_mode RPC check failed unexpectedly: ${
-        rpcCheck.error?.message || "RPC did not reject dummy user"
+        JSON.stringify(rpcCheckValue) || "RPC did not reject dummy user"
       }`
     );
   }

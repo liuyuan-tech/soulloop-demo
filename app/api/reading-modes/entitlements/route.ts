@@ -16,6 +16,9 @@ type UnlockReadingModeResult = {
   entitlementId?: string;
   mode?: string;
   creditsBalance?: number | null;
+  error?: string;
+  code?: string;
+  insufficientCredits?: boolean;
 };
 
 function getRpcResultValue(data: unknown): UnlockReadingModeResult {
@@ -164,6 +167,23 @@ export async function POST(request: Request) {
   }
 
   const result = getRpcResultValue(data);
+
+  if (result.error || result.code) {
+    const insufficient =
+      result.code === "INSUFFICIENT_CREDITS" || result.insufficientCredits;
+    const badRequest =
+      result.code === "UNSUPPORTED_READING_MODE" ||
+      result.code === "INVALID_READING_MODE_COST";
+
+    return NextResponse.json(
+      {
+        error: result.error || "Reading mode unlock failed.",
+        code: result.code || "READING_MODE_UNLOCK_FAILED",
+        creditsBalance: result.creditsBalance,
+      },
+      { status: insufficient ? 402 : badRequest ? 400 : 500 }
+    );
+  }
 
   const { data: entitlements } = await supabaseAdmin
     .from("reading_mode_entitlements")
