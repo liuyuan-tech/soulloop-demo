@@ -38,9 +38,6 @@ create or replace function public.unlock_reading_mode(
   p_credits_cost integer
 )
 returns jsonb
-language plpgsql
-security definer
-set search_path = public
 as '
 declare
   v_credits_balance integer;
@@ -126,7 +123,10 @@ begin
     ''creditsBalance'', v_credits_balance
   );
 end;
-';
+'
+language plpgsql
+security definer
+set search_path = public;
 
 grant execute on function public.unlock_reading_mode(
   uuid,
