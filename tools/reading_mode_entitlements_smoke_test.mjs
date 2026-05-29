@@ -18,6 +18,30 @@ const migrationPath = path.join(
   displayRootDir,
   "supabase/migrations/20260524000000_reading_mode_entitlements.sql"
 );
+const nativeFetch = globalThis.fetch.bind(globalThis);
+
+globalThis.fetch = async function retryingFetch(input, init) {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await nativeFetch(input, init);
+    } catch (error) {
+      const retryable =
+        error instanceof TypeError &&
+        String(error.message || "").toLowerCase().includes("fetch failed");
+
+      if (!retryable || attempt === maxAttempts) {
+        throw error;
+      }
+
+      const delayMs = 500 * attempt;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw new Error("Supabase fetch retry exhausted");
+};
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
