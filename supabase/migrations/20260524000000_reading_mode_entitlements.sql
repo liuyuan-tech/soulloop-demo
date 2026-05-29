@@ -20,23 +20,14 @@ on public.reading_mode_entitlements(user_id, status);
 
 alter table public.reading_mode_entitlements enable row level security;
 
-do $reading_mode_policy$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'reading_mode_entitlements'
-      and policyname = 'reading_mode_entitlements_select_own'
-  ) then
-    create policy reading_mode_entitlements_select_own
-    on public.reading_mode_entitlements
-    for select
-    to authenticated
-    using (user_id = auth.uid());
-  end if;
-end;
-$reading_mode_policy$;
+drop policy if exists reading_mode_entitlements_select_own
+on public.reading_mode_entitlements;
+
+create policy reading_mode_entitlements_select_own
+on public.reading_mode_entitlements
+for select
+to authenticated
+using (user_id = auth.uid());
 
 grant select on public.reading_mode_entitlements to authenticated;
 grant select, insert, update, delete on public.reading_mode_entitlements to service_role;
@@ -50,17 +41,17 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $unlock_reading_mode$
+as '
 declare
   v_credits_balance integer;
   v_entitlement_id uuid;
 begin
-  if p_mode not in ('tarot', 'color_personality', 'daily_loop') then
-    raise exception 'Unsupported reading mode: %', p_mode;
+  if p_mode not in (''tarot'', ''color_personality'', ''daily_loop'') then
+    raise exception ''Unsupported reading mode: %'', p_mode;
   end if;
 
   if coalesce(p_credits_cost, 0) <= 0 then
-    raise exception 'Reading mode unlock cost must be positive';
+    raise exception ''Reading mode unlock cost must be positive'';
   end if;
 
   select credits_balance
@@ -70,7 +61,7 @@ begin
   for update;
 
   if not found then
-    raise exception 'Profile not found for reading mode unlock user %', p_user_id;
+    raise exception ''Profile not found for reading mode unlock user %'', p_user_id;
   end if;
 
   select id
@@ -78,20 +69,20 @@ begin
   from public.reading_mode_entitlements
   where user_id = p_user_id
     and mode = p_mode
-    and status = 'active'
+    and status = ''active''
   limit 1;
 
   if v_entitlement_id is not null then
     return jsonb_build_object(
-      'alreadyOwned', true,
-      'entitlementId', v_entitlement_id,
-      'mode', p_mode,
-      'creditsBalance', v_credits_balance
+      ''alreadyOwned'', true,
+      ''entitlementId'', v_entitlement_id,
+      ''mode'', p_mode,
+      ''creditsBalance'', v_credits_balance
     );
   end if;
 
   if coalesce(v_credits_balance, 0) < p_credits_cost then
-    raise exception 'Insufficient credits for reading mode unlock user %', p_user_id;
+    raise exception ''Insufficient credits for reading mode unlock user %'', p_user_id;
   end if;
 
   update public.profiles
@@ -110,8 +101,8 @@ begin
   values (
     p_user_id,
     -p_credits_cost,
-    'usage',
-    'unlock_' || p_mode
+    ''usage'',
+    ''unlock_'' || p_mode
   );
 
   insert into public.reading_mode_entitlements (
@@ -123,19 +114,19 @@ begin
   values (
     p_user_id,
     p_mode,
-    'credit_unlock',
+    ''credit_unlock'',
     p_credits_cost
   )
   returning id into v_entitlement_id;
 
   return jsonb_build_object(
-    'alreadyOwned', false,
-    'entitlementId', v_entitlement_id,
-    'mode', p_mode,
-    'creditsBalance', v_credits_balance
+    ''alreadyOwned'', false,
+    ''entitlementId'', v_entitlement_id,
+    ''mode'', p_mode,
+    ''creditsBalance'', v_credits_balance
   );
 end;
-$unlock_reading_mode$;
+';
 
 grant execute on function public.unlock_reading_mode(
   uuid,
