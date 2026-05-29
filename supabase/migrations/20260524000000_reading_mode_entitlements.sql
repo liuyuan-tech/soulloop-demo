@@ -20,7 +20,7 @@ on public.reading_mode_entitlements(user_id, status);
 
 alter table public.reading_mode_entitlements enable row level security;
 
-do $$
+do $reading_mode_policy$
 begin
   if not exists (
     select 1
@@ -35,7 +35,8 @@ begin
     to authenticated
     using (user_id = auth.uid());
   end if;
-end $$;
+end;
+$reading_mode_policy$;
 
 grant select on public.reading_mode_entitlements to authenticated;
 grant select, insert, update, delete on public.reading_mode_entitlements to service_role;
@@ -49,7 +50,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $unlock_reading_mode$
 declare
   v_credits_balance integer;
   v_entitlement_id uuid;
@@ -134,7 +135,7 @@ begin
     'creditsBalance', v_credits_balance
   );
 end;
-$$;
+$unlock_reading_mode$;
 
 grant execute on function public.unlock_reading_mode(
   uuid,
